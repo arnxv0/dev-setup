@@ -184,7 +184,6 @@ vim.keymap.set('t', '<Esc><Esc>', '<C-\\><C-n>', { desc = 'Exit terminal mode' }
 -- vim.keymap.set('n', '<right>', '<cmd>echo "Use l to move!!"<CR>')
 -- vim.keymap.set('n', '<up>', '<cmd>echo "Use k to move!!"<CR>')
 -- vim.keymap.set('n', '<down>', '<cmd>echo "Use j to move!!"<CR>')
-
 -- Keybinds to make split navigation easier.
 --  Use CTRL+<hjkl> to switch between windows
 --
@@ -193,6 +192,26 @@ vim.keymap.set('n', '<C-h>', '<C-w><C-h>', { desc = 'Move focus to the left wind
 vim.keymap.set('n', '<C-l>', '<C-w><C-l>', { desc = 'Move focus to the right window' })
 vim.keymap.set('n', '<C-j>', '<C-w><C-j>', { desc = 'Move focus to the lower window' })
 vim.keymap.set('n', '<C-k>', '<C-w><C-k>', { desc = 'Move focus to the upper window' })
+
+-- vim.keymap.set('n', '<C-f>', function()
+-- local current_buf = vim.api.nvim_get_current_buf()
+-- Open tmux session in terminal
+--  vim.cmd 'silent term tmux neww tmux-sessionizer'
+--   -- Add autocmd to refresh Vim when terminal exits
+--   vim.api.nvim_create_autocmd('TermClose', {
+--     pattern = '*',
+--     callback = function()
+--       -- Return to the buffer that was active before opening the terminal
+--       if vim.api.nvim_buf_is_valid(current_buf) then
+--         vim.api.nvim_set_current_buf(current_buf)
+--       end
+--
+--       -- Return to normal mode after the terminal closes vim.cmd 'b#'
+--       vim.cmd 'redraw!'
+--   end,
+--   })
+-- vim.keymap.set('n', '<C-f>', '<cmd>silent :term tmux neww tmux-sessionizer<CR>', { desc = 'Open tmux-sessionizer' })
+vim.keymap.set('n', '<C-f>', '<cmd>silent !tmux neww tmux-sessionizer<CR>')
 
 -- [[ Basic Autocommands ]]
 --  See `:help lua-guide-autocommands`
@@ -833,7 +852,7 @@ require('lazy').setup({
 
           -- Scroll the documentation window [b]ack / [f]orward
           ['<C-b>'] = cmp.mapping.scroll_docs(-4),
-          ['<C-f>'] = cmp.mapping.scroll_docs(4),
+          -- ['<C-f>'] = cmp.mapping.scroll_docs(4),
 
           -- Accept ([y]es) the completion.
           --  This will auto-import if your LSP supports it.

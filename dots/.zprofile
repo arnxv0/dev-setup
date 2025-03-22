@@ -1,16 +1,17 @@
+VIM="nvim"
+alias vim="nvim"
+
 [ -f ~/.fzf.zsh ] && source ~/.fzf.zsh
 
-# Fuzzy find command history and execute it
-fzf_run_command() {
-    selected_command=$(history | fzf --tac | sed -E 's/^[ ]*[0-9]+[ ]*//')
-    if [ -n "$selected_command" ]; then
-        eval "$selected_command"
+
+addToPath() {
+    if [[ "$PATH" != *"$1"* ]]; then
+        export PATH=$PATH:$1
     fi
 }
 
-# Register the function as a Zsh widget
-zle -N fzf_run_command
+addToPath $HOME/.local/custom_setup_bin
 
-# Bind Ctrl + R to invoke fzf_run_command function
-bindkey '^R' fzf_run_command
+
+bindkey -s ^f "tmux-sessionizer\n"
 
