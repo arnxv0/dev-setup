@@ -536,7 +536,7 @@ require('lazy').setup({
         builtin.find_files {
           find_command = { 'rg', '--files', '--hidden', '-g', '!.git', '-g', '!.node_modules' },
         }
-      end, { desc = '[S]earch [N]eovim files' })
+      end, { desc = '[S]earch [F]iles' })
 
       local extensions = require('telescope').extensions
       vim.keymap.set('n', '<leader>wt', function()
