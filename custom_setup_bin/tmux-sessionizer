@@ -17,6 +17,15 @@ hydrate() {
     elif [ -f $HOME/.tmux-sessionizer ]; then
         tmux send-keys -t $1 "source $HOME/.tmux-sessionizer" c-M
     fi
+
+    # Start nvim in the primary window of the session
+    tmux send-keys -t $1 "nvim ." C-m
+
+    # Open a new tmux window (without running any commands in it)
+    tmux new-window -t $1 -c $2
+
+    # Focus back on the window where nvim was started (primary window)
+    tmux select-window -t $1:1
 }
 
 if [[ $# -eq 1 ]]; then
