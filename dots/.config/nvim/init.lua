@@ -93,6 +93,10 @@ vim.g.maplocalleader = ' '
 -- Set to true if you have a Nerd Font installed and selected in the terminal
 vim.g.have_nerd_font = false
 
+-- nvim tree disable netrw
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
+
 -- [[ Setting options ]]
 -- See `:help vim.opt`
 -- NOTE: You can change these options as you wish!
@@ -281,6 +285,9 @@ require('lazy').setup({
     opts = {},
   },
   {
+    'nvim-tree/nvim-web-devicons',
+  },
+  {
     'ThePrimeagen/git-worktree.nvim',
     opts = {},
   },
@@ -368,6 +375,19 @@ require('lazy').setup({
     keys = {
       { '<leader>lg', '<cmd>LazyGit<cr>', desc = 'LazyGit' },
     },
+  },
+  {
+    'nvim-tree/nvim-tree.lua',
+    version = '*',
+    lazy = false,
+    dependencies = {
+      'nvim-tree/nvim-web-devicons',
+    },
+    config = function()
+      require('nvim-tree').setup {
+        update_focused_file = { enable = true },
+      }
+    end,
   },
   -- NOTE: Plugins can also be configured to run Lua code when they are loaded.
   --
