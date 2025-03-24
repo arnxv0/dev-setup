@@ -148,15 +148,15 @@ done
 CUSTOM_SETUP_BIN_DEST="$HOME/.local/custom_setup_bin"
 
 # Check if the directory exists
-if [ ! -d "$BIN_PATH" ]; then
+if [ ! -d "$CUSTOM_SETUP_BIN_DEST" ]; then
   # Create the directory if it doesn't exist
-  mkdir -p "$BIN_PATH"
+  mkdir -p "$CUSTOM_SETUP_BIN_DEST"
 fi
 
 # Copy all the bin scripts
-cp -R "../custom_setup_bin" "$BIN_PATH"
+cp -R "../custom_setup_bin" "$CUSTOM_SETUP_BIN_DEST"
 
 # Make the scripts executable
-chmod -R +x "$BIN_PATH"
+chmod -R +x "$CUSTOM_SETUP_BIN_DEST"
 
 echo "Files and directories copied successfully."
