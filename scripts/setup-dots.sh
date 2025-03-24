@@ -14,10 +14,6 @@ EXCLUDE_LIST=(
     ".config"
 )
 
-CUSTOM_BIN_SCRIPTS=(
-    "tmux-sessionizer"
-)
-
 # Check if the source directory exists
 if [ ! -d "$SOURCE" ]; then
   echo "Source directory '$SOURCE' does not exist!"
@@ -149,8 +145,18 @@ for item in "$CONFIG_SOURCE"/.* "$CONFIG_SOURCE"/*; do
   cp -r "$item" "$CONFIG_DESTINATION"
 done
 
-# For copying all the bin scripts
-cp -R "../custom_setup_bin" "$HOME/.local" 
-chmod -R +x "$HOME/.local/custom_setup_bin"
+CUSTOM_SETUP_BIN_DEST="$HOME/.local/custom_setup_bin"
+
+# Check if the directory exists
+if [ ! -d "$BIN_PATH" ]; then
+  # Create the directory if it doesn't exist
+  mkdir -p "$BIN_PATH"
+fi
+
+# Copy all the bin scripts
+cp -R "../custom_setup_bin" "$BIN_PATH"
+
+# Make the scripts executable
+chmod -R +x "$BIN_PATH"
 
 echo "Files and directories copied successfully."
