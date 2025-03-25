@@ -97,13 +97,16 @@ M.create_worktree = function(opts)
               else
                 command = { 'git', 'worktree', 'add', '-b', branch_name, path }
               end
+              local cwd = vim.fn.getcwd()
 
-              vim.system(command, {}, function(obj)
-                if obj.code == 0 then
-                  print('✅ Worktree created successfully at ' .. path)
-                else
-                  print('❌ Error creating worktree: ' .. obj.stderr)
-                end
+              vim.system(command, { cwd = cwd }, function(obj)
+                vim.schedule(function()
+                  if obj.code == 0 then
+                    vim.notify('✅ Worktree created successfully at ' .. path, vim.log.levels.INFO)
+                  else
+                    vim.notify('❌ Error creating worktree: ' .. obj.stderr, vim.log.levels.ERROR)
+                  end
+                end)
               end)
 
               -- print('Created worktree at ' .. path .. ' for branch ' .. branch)
