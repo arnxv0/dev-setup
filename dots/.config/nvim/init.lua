@@ -287,10 +287,7 @@ require('lazy').setup({
   {
     'nvim-tree/nvim-web-devicons',
   },
-  {
-    'ThePrimeagen/git-worktree.nvim',
-    opts = {},
-  },
+  { dir = vim.fn.stdpath 'config' .. '/lua/custom/telescope_worktree' },
   {
     'nvim-lualine/lualine.nvim',
     opts = {
@@ -487,7 +484,7 @@ require('lazy').setup({
         end,
       },
       { 'nvim-telescope/telescope-ui-select.nvim' },
-
+      { dir = vim.fn.stdpath 'config' .. '/lua/custom/telescope_worktree' },
       -- Useful for getting pretty icons, but requires a Nerd Font.
       { 'nvim-tree/nvim-web-devicons', enabled = vim.g.have_nerd_font },
     },
@@ -527,13 +524,14 @@ require('lazy').setup({
           ['ui-select'] = {
             require('telescope.themes').get_dropdown(),
           },
+          ['worktree'] = {},
         },
       }
 
       -- Enable Telescope extensions if they are installed
       pcall(require('telescope').load_extension, 'fzf')
       pcall(require('telescope').load_extension, 'ui-select')
-      pcall(require('telescope').load_extension, 'git_worktree')
+      pcall(require('telescope').load_extension, 'worktree')
 
       -- See `:help telescope.builtin`
       local builtin = require 'telescope.builtin'
@@ -578,13 +576,11 @@ require('lazy').setup({
       end, { desc = '[S]earch [F]iles' })
 
       local extensions = require('telescope').extensions
-      vim.keymap.set('n', '<leader>wt', function()
-        extensions.git_worktree.git_worktrees()
-      end, { desc = 'Search [W]ork [T]ree' })
+      vim.keymap.set('n', '<leader>wt', '<cmd>Telescope telescope_worktree.worktree<cr>', { desc = 'Create [W]ork [T]ree' })
 
-      vim.keymap.set('n', '<leader>wc', function()
-        extensions.git_worktree.create_git_worktree()
-      end, { desc = '[W]ork tree [C]reate' })
+      -- vim.keymap.set('n', '<leader>wc', function()
+      --   extensions.git_worktree.create_git_worktree()
+      -- end, { desc = '[W]ork tree [C]reate' })
     end,
   },
 
