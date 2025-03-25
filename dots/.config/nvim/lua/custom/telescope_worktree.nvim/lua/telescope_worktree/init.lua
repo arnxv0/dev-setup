@@ -123,6 +123,4 @@ M.create_worktree = function(opts)
     :find()
 end
 
-M.create_worktree {}
-
 return M
