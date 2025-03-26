@@ -9,8 +9,8 @@ else
 fi
 
 # Update Homebrew to get the latest package information
-echo "Updating Homebrew..."
-brew update
+# echo "Updating Homebrew..."
+# brew update
 
 # Install lazygit, neovim, tmux, and other common tools
 echo "Installing dependencies..."
@@ -69,6 +69,14 @@ if ! command -v tree-sitter &> /dev/null; then
     echo "tree-sitter installed successfully."
 else
     echo "tree-sitter is already installed."
+fi
+
+# Install font-hack-nerd-font
+if ! command -v font-hack-nerd-font &> /dev/null; then
+    brew install font-hack-nerd-font
+    echo "font-hack-nerd-font installed successfully."
+else
+    echo "font-hack-nerd-font is already installed."
 fi
 
 echo "All dependencies are installed!"
