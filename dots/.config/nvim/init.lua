@@ -287,7 +287,9 @@ require('lazy').setup({
   {
     'nvim-tree/nvim-web-devicons',
   },
-  { dir = vim.fn.stdpath 'config' .. '/lua/custom/telescope_worktree.nvim' },
+  {
+    'katkodeorg/telescope_worktree.nvim',
+  },
   {
     'nvim-lualine/lualine.nvim',
     opts = {
@@ -484,7 +486,9 @@ require('lazy').setup({
         end,
       },
       { 'nvim-telescope/telescope-ui-select.nvim' },
-      { dir = vim.fn.stdpath 'config' .. '/lua/custom/telescope_worktree.nvim' },
+      {
+        'katkodeorg/telescope_worktree.nvim',
+      },
       -- Useful for getting pretty icons, but requires a Nerd Font.
       { 'nvim-tree/nvim-web-devicons', enabled = vim.g.have_nerd_font },
     },
