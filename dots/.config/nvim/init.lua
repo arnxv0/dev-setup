@@ -291,6 +291,14 @@ require('lazy').setup({
     'katkodeorg/telescope_worktree.nvim',
   },
   {
+    'lukas-reineke/indent-blankline.nvim',
+    main = 'ibl',
+    opts = {
+      indent = { char = '┊' },
+      scope = { show_start = false, show_end = false },
+    },
+  },
+  {
     'nvim-lualine/lualine.nvim',
     opts = {
       options = {
