@@ -1057,7 +1057,22 @@ require('lazy').setup({
       vim.cmd.colorscheme 'tokyonight-night'
     end,
   },
-
+  -- {
+  --   'nyoom-engineering/oxocarbon.nvim',
+  --   priority = 1000, -- Make sure to load this before all the other start plugins.
+  --   config = function()
+  --     vim.opt.background = 'dark' -- set this to dark or light
+  --     vim.cmd.colorscheme 'oxocarbon'
+  --   end,
+  -- },
+  -- {
+  --   'Mofiqul/vscode.nvim',
+  --   priority = 1000, -- Make sure to load this before all the other start plugins.
+  --   config = function()
+  --     vim.o.background = 'dark'
+  --     vim.cmd.colorscheme 'vscode'
+  --   end,
+  -- },
   -- Highlight todo, notes, etc in comments
   {
     'folke/todo-comments.nvim',
