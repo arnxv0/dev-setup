@@ -1049,8 +1049,12 @@ require('lazy').setup({
         styles = {
           comments = { italic = false }, -- Disable italics in comments
         },
+        -- https://github.com/folke/tokyonight.nvim/blob/main/extras/lua/tokyonight_night.lua
+        on_colors = function(colors)
+          colors.bg = '#16161e'
+          colors.bg_sidebar = '#1a1b26'
+        end,
       }
-
       -- Load the colorscheme here.
       -- Like many other themes, this one has different styles, and you could load
       -- any other, such as 'tokyonight-storm', 'tokyonight-moon', or 'tokyonight-day'.
