@@ -153,8 +153,11 @@ if [ ! -d "$CUSTOM_SETUP_BIN_DEST" ]; then
   mkdir -p "$CUSTOM_SETUP_BIN_DEST"
 fi
 
+# Remove all contents in the target directory (make sure it's empty)
+rm -rf "$CUSTOM_SETUP_BIN_DEST"/*
+
 # Copy all the bin scripts
-cp -R "../custom_setup_bin" "$CUSTOM_SETUP_BIN_DEST"
+cp -Rf "../custom_setup_bin/"* "$CUSTOM_SETUP_BIN_DEST/"
 
 # Make the scripts executable
 chmod -R +x "$CUSTOM_SETUP_BIN_DEST"

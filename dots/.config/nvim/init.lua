@@ -165,6 +165,12 @@ vim.opt.scrolloff = 10
 -- See `:help 'confirm'`
 vim.opt.confirm = true
 
+-- fold code --
+vim.opt.foldcolumn = '1'
+vim.opt.foldlevel = 99
+vim.opt.foldlevelstart = 99
+vim.opt.foldenable = true
+
 -- [[ Basic Keymaps ]]
 --  See `:help vim.keymap.set()`
 
@@ -289,6 +295,120 @@ require('lazy').setup({
   },
   {
     'katkodeorg/telescope_worktree.nvim',
+  },
+  {
+    'kevinhwang91/nvim-ufo',
+    opts = {
+      provider_selector = function(bufnr, filetype, buftype)
+        return { 'lsp', 'indent' }
+      end,
+    },
+    dependencies = {
+      { 'kevinhwang91/promise-async' },
+    },
+  },
+  {
+    'nvim-flutter/flutter-tools.nvim',
+    lazy = false,
+    dependencies = {
+      'nvim-lua/plenary.nvim',
+      'stevearc/dressing.nvim', -- optional for vim.ui.select
+    },
+    config = true,
+    opts = {
+      ui = {
+        -- the border type to use for all floating windows, the same options/formats
+        -- used for ":h nvim_open_win" e.g. "single" | "shadow" | {<table-of-eight-chars>}
+        border = 'rounded',
+        -- This determines whether notifications are show with `vim.notify` or with the plugin's custom UI
+        -- please note that this option is eventually going to be deprecated and users will need to
+        -- depend on plugins like `nvim-notify` instead.
+        notification_style = 'native',
+      },
+      decorations = {
+        statusline = {
+          -- set to true to be able use the 'flutter_tools_decorations.app_version' in your statusline
+          -- this will show the current version of the flutter app from the pubspec.yaml file
+          app_version = false,
+          -- set to true to be able use the 'flutter_tools_decorations.device' in your statusline
+          -- this will show the currently running device if an application was started with a specific
+          -- device
+          device = false,
+          -- set to true to be able use the 'flutter_tools_decorations.project_config' in your statusline
+          -- this will show the currently selected project configuration
+          project_config = false,
+        },
+      },
+      debugger = { -- integrate with nvim dap + install dart code debugger
+        enabled = false,
+        -- if empty dap will not stop on any exceptions, otherwise it will stop on those specified
+        -- see |:help dap.set_exception_breakpoints()| for more info
+        exception_breakpoints = {},
+        -- Whether to call toString() on objects in debug views like hovers and the
+        -- variables list.
+        -- Invoking toString() has a performance cost and may introduce side-effects,
+        -- although users may expected this functionality. null is treated like false.
+        evaluate_to_string_in_debug_views = true,
+        -- You can use the `debugger.register_configurations` to register custom runner configuration (for example for different targets or flavor). Plugin automatically registers the default configuration, but you can override it or add new ones.
+        -- register_configurations = function(paths)
+        --   require("dap").configurations.dart = {
+        --     -- your custom configuration
+        --   }
+        -- end,
+      },
+      -- flutter_path = '<full/path/if/needed>', -- <-- this takes priority over the lookup
+      -- flutter_lookup_cmd = nil, -- example "dirname $(which flutter)" or "asdf where flutter"
+      root_patterns = { '.git', 'pubspec.yaml' }, -- patterns to find the root of your flutter project
+      fvm = true, -- takes priority over path, uses <workspace>/.fvm/flutter_sdk if enabled
+      widget_guides = {
+        enabled = false,
+      },
+      closing_tags = {
+        highlight = 'ErrorMsg', -- highlight for the closing tag
+        prefix = '>', -- character to use for close tag e.g. > Widget
+        priority = 10, -- priority of virtual text in current line
+        -- consider to configure this when there is a possibility of multiple virtual text items in one line
+        -- see `priority` option in |:help nvim_buf_set_extmark| for more info
+        enabled = true, -- set to false to disable
+      },
+      dev_log = {
+        enabled = true,
+        filter = nil, -- optional callback to filter the log
+        -- takes a log_line as string argument; returns a boolean or nil;
+        -- the log_line is only added to the output if the function returns true
+        notify_errors = false, -- if there is an error whilst running then notify the user
+        open_cmd = '15split', -- command to use to open the log buffer
+        focus_on_open = true, -- focus on the newly opened log window
+      },
+      dev_tools = {
+        autostart = false, -- autostart devtools server if not detected
+        auto_open_browser = false, -- Automatically opens devtools in the browser
+      },
+      outline = {
+        open_cmd = '30vnew', -- command to use to open the outline buffer
+        auto_open = false, -- if true this will open the outline automatically when it is first populated
+      },
+      lsp = {
+        color = { -- show the derived colours for dart variables
+          enabled = false, -- whether or not to highlight color variables at all, only supported on flutter >= 2.10
+          background = false, -- highlight the background
+          background_color = nil, -- required, when background is transparent (i.e. background_color = { r = 19, g = 17, b = 24},)
+          foreground = false, -- highlight the foreground
+          virtual_text = true, -- show the highlight using virtual text
+          virtual_text_str = '■', -- the virtual text character to highlight
+        },
+        -- see the link below for details on each option:
+        -- https://github.com/dart-lang/sdk/blob/master/pkg/analysis_server/tool/lsp_spec/README.md#client-workspace-configuration
+        settings = {
+          showTodos = true,
+          completeFunctionCalls = true,
+          -- analysisExcludedFolders = { '<path-to-flutter-sdk-packages>' },
+          renameFilesWithClasses = 'prompt', -- "always"
+          enableSnippets = true,
+          updateImportsOnRename = true, -- Whether to update imports and other directives when files are renamed. Required for `FlutterRename` command.
+        },
+      },
+    },
   },
   {
     'lukas-reineke/indent-blankline.nvim',
@@ -499,6 +619,7 @@ require('lazy').setup({
       },
       -- Useful for getting pretty icons, but requires a Nerd Font.
       { 'nvim-tree/nvim-web-devicons', enabled = vim.g.have_nerd_font },
+      { 'nvim-flutter/flutter-tools.nvim' },
     },
     config = function()
       -- Telescope is a fuzzy finder that comes with a lot of different things that
@@ -543,6 +664,7 @@ require('lazy').setup({
       pcall(require('telescope').load_extension, 'fzf')
       pcall(require('telescope').load_extension, 'ui-select')
       pcall(require('telescope').load_extension, 'telescope_worktree')
+      pcall(require('telescope').load_extension, 'flutter')
 
       -- See `:help telescope.builtin`
       local builtin = require 'telescope.builtin'
@@ -592,6 +714,13 @@ require('lazy').setup({
         extensions.telescope_worktree.create_worktree()
       end, { desc = '[W]ork tree [C]reate' })
 
+      vim.keymap.set('n', '<leader>Fv', function()
+        extensions.flutter.fvm()
+      end, { desc = '[F]lutter [V]ersion manager' })
+
+      vim.keymap.set('n', '<leader>Fc', function()
+        extensions.flutter.commands()
+      end, { desc = '[F]lutter [C]ommands' })
       -- vim.keymap.set('n', '<leader>wc', function()
       --   extensions.git_worktree.create_git_worktree()
       -- end, { desc = '[W]ork tree [C]reate' })
@@ -703,6 +832,8 @@ require('lazy').setup({
           -- Execute a code action, usually your cursor needs to be on top of an error
           -- or a suggestion from your LSP for this to activate.
           map('<leader>ca', vim.lsp.buf.code_action, '[C]ode [A]ction', { 'n', 'x' })
+
+          map('K', vim.lsp.buf.hover, 'LSP Hover Doc')
 
           -- WARN: This is not Goto Definition, this is Goto Declaration.
           --  For example, in C this would take you to the header.
@@ -1173,6 +1304,7 @@ require('lazy').setup({
         'query',
         'vim',
         'vimdoc',
+        'dart',
       },
       -- Autoinstall languages that are not installed
       auto_install = true,

@@ -31,7 +31,47 @@ hydrate() {
 if [[ $# -eq 1 ]]; then
     selected=$1
 else
-    selected=$(find ~/ -mindepth 1 -maxdepth 3 -type d | fzf)
+
+    # Simulating a dictionary using arrays
+    keys=(
+        "$HOME/Desktop"
+        "$HOME/Downloads"
+        "$HOME/Documents"
+        "$HOME/Desktop/Flutter/Projects"
+        "$HOME/Desktop/KatKode/projects"
+        "$HOME"
+    )
+    values=(
+        2
+        2
+        2
+        1
+        1
+        1
+    )
+
+    all_dirs=()
+
+    # Loop through the paths
+    for i in "${!keys[@]}"; do
+        path="${keys[$i]}"
+        depth="${values[$i]}"
+
+        # Ensure paths are properly expanded
+        expanded_path=$(eval echo "$path")
+
+        # Check if depth is a number
+        if [[ "$depth" =~ ^[0-9]+$ ]]; then
+            # Ensure the path is quoted to avoid issues with spaces or special characters
+            dirs=$(find "$expanded_path" -mindepth 1 -maxdepth "$depth" -type d 2>/dev/null)
+            all_dirs+=($dirs)
+        else
+            echo "Invalid depth: $depth for path: $expanded_path" >&2
+        fi
+done
+
+# Remove duplicates and use fzf
+selected=$(printf "%s\n" "${all_dirs[@]}" | sort -u | fzf)
 fi
 
 if [[ -z $selected ]]; then
