@@ -16,16 +16,20 @@ addToPath $HOME/.local/custom_setup_bin
 bindkey -s ^f "tmux-sessionizer\n"
 
 search_and_run() {
-    local history_file
-    if [[ -n "$ZSH_VERSION" ]]; then
-        history_file="$HOME/.zsh_history"
-        cmd=$(sed -E 's/^: [0-9]+:[0-9]+;//' "$history_file" | awk '!a[$0]++' | fzf --tac --reverse --preview="echo {}" --height=40% --border)
-    elif [[ -n "$BASH_VERSION" ]]; then
-        history_file="$HOME/.bash_history"
-        cmd=$(cat "$history_file" | awk '!a[$0]++' | fzf --tac --reverse --preview="echo {}" --height=40% --border)
+    local cmd
+
+    if [[ -n "$ZSH_VERSION" && -f "$HOME/.zsh_history" ]]; then
+        # Zsh: clean metadata
+        cmd=$(sed -E 's/^: [0-9]+:[0-9]+;//' "$HOME/.zsh_history" | awk '!a[$0]++' | \
+              fzf --tac --reverse --preview="echo {}" --height=40% --border)
+    elif [[ -n "$BASH_VERSION" && -f "$HOME/.bash_history" ]]; then
+        # Bash: plain lines
+        cmd=$(cat "$HOME/.bash_history" | awk '!a[$0]++' | \
+              fzf --tac --reverse --preview="echo {}" --height=40% --border)
     else
-        echo "Shell not supported"
-        return 1
+        # Fallback for other shells
+        cmd=$(history | sed 's/^[ ]*[0-9]*[ ]*//' | awk '!a[$0]++' | \
+              fzf --tac --reverse --preview="echo {}" --height=40% --border)
     fi
 
     if [[ -n "$cmd" ]]; then
