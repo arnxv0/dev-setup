@@ -313,6 +313,7 @@ require('lazy').setup({
     dependencies = {
       'nvim-lua/plenary.nvim',
       'stevearc/dressing.nvim', -- optional for vim.ui.select
+      'hrsh7th/cmp-nvim-lsp',
     },
     config = true,
     opts = {
@@ -389,6 +390,15 @@ require('lazy').setup({
         auto_open = false, -- if true this will open the outline automatically when it is first populated
       },
       lsp = {
+        capabilities = function(config)
+          local cmp = require 'cmp_nvim_lsp'
+          config = cmp.default_capabilities(config)
+
+          -- 🛠️ Your custom config changes here
+          -- config.specificThingIDontWant = false
+
+          return config
+        end,
         color = { -- show the derived colours for dart variables
           enabled = false, -- whether or not to highlight color variables at all, only supported on flutter >= 2.10
           background = false, -- highlight the background
@@ -1048,7 +1058,6 @@ require('lazy').setup({
       },
     },
   },
-
   { -- Autocompletion
     'hrsh7th/nvim-cmp',
     event = 'InsertEnter',
