@@ -297,6 +297,39 @@ require('lazy').setup({
     'katkodeorg/telescope_worktree.nvim',
   },
   {
+
+    'ThePrimeagen/harpoon',
+    dependencies = {
+      { 'nvim-lua/plenary.nvim' },
+    },
+    config = function()
+      require('harpoon').setup {
+        menu = {
+          width = vim.api.nvim_win_get_width(0) - 4,
+        },
+      }
+
+      local mark = require 'harpoon.mark'
+      local ui = require 'harpoon.ui'
+
+      vim.keymap.set('n', '<leader>aa', mark.add_file, { desc = 'Add to harpoon list' })
+      vim.keymap.set('n', '<leader>ah', ui.toggle_quick_menu, { desc = 'Open harpoon menu' })
+
+      vim.keymap.set('n', '<leader>a7', function()
+        ui.nav_file(1)
+      end, { desc = 'Open 1st file in harpoon' })
+      vim.keymap.set('n', '<leader>a8', function()
+        ui.nav_file(2)
+      end, { desc = 'Open 2nd file in harpoon' })
+      vim.keymap.set('n', '<leader>a9', function()
+        ui.nav_file(3)
+      end, { desc = 'Open 3rd file in harpoon' })
+      vim.keymap.set('n', '<leader>a0', function()
+        ui.nav_file(4)
+      end, { desc = 'Open 4th file in harpoon' })
+    end,
+  },
+  {
     'kevinhwang91/nvim-ufo',
     opts = {
       provider_selector = function(bufnr, filetype, buftype)
@@ -675,6 +708,7 @@ require('lazy').setup({
       pcall(require('telescope').load_extension, 'ui-select')
       pcall(require('telescope').load_extension, 'telescope_worktree')
       pcall(require('telescope').load_extension, 'flutter')
+      pcall(require('telescope').load_extension, 'harpoon')
 
       -- See `:help telescope.builtin`
       local builtin = require 'telescope.builtin'
@@ -950,7 +984,6 @@ require('lazy').setup({
       --        For example, to see the options for `lua_ls`, you could go to: https://luals.github.io/wiki/settings/
       local servers = {
         -- clangd = {},
-        -- gopls = {},
         -- pyright = {},
         -- rust_analyzer = {},
         -- ... etc. See `:help lspconfig-all` for a list of all the pre-configured LSPs
@@ -962,6 +995,37 @@ require('lazy').setup({
         astro = {},
         tailwindcss = {},
         ts_ls = {},
+        gopls = {
+          cmd = { 'gopls' },
+          filetypes = { 'go', 'gomod', 'gowork', 'gotmpl' },
+          root_dir = require('lspconfig.util').root_pattern('go.work', 'go.mod', '.git'),
+          on_attach = function(client, bufnr)
+            if client.server_capabilities.documentFormattingProvider then
+              vim.api.nvim_create_autocmd('BufWritePre', {
+                buffer = bufnr,
+                callback = function()
+                  vim.lsp.buf.format { async = false }
+                end,
+              })
+            end
+          end,
+          settings = {
+            gopls = {
+              completeUnimported = true,
+              usePlaceholders = true,
+              staticcheck = true,
+              gofumpt = true,
+              analyses = {
+                unusedparams = true,
+                shadow = true,
+                nilness = true,
+                unusedwrite = true,
+                fieldalignment = true,
+                ST1000 = true,
+              },
+            },
+          },
+        },
         lua_ls = {
           -- cmd = { ... },
           -- filetypes = { ... },
