@@ -297,6 +297,9 @@ require('lazy').setup({
     'katkodeorg/telescope_worktree.nvim',
   },
   {
+    'github/copilot.vim',
+  },
+  {
 
     'ThePrimeagen/harpoon',
     dependencies = {
