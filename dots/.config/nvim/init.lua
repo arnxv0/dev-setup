@@ -432,6 +432,23 @@ require('lazy').setup({
 
           -- 🛠️ Your custom config changes here
           -- config.specificThingIDontWant = false
+          config.textDocument.codeAction = {
+            dynamicRegistration = false,
+            codeActionLiteralSupport = {
+              codeActionKind = {
+                valueSet = {
+                  '',
+                  'quickfix',
+                  'refactor',
+                  'refactor.extract',
+                  'refactor.inline',
+                  'refactor.rewrite',
+                  'source',
+                  'source.organizeImports',
+                },
+              },
+            },
+          }
 
           return config
         end,
