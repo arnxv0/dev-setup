@@ -1015,6 +1015,19 @@ require('lazy').setup({
         astro = {},
         tailwindcss = {},
         ts_ls = {},
+        pyright = {
+          filetypes = { 'python' },
+          root_dir = require('lspconfig.util').root_pattern('.git', 'setup.py', 'setup.cfg', 'pyproject.toml', 'requirements.txt'),
+          settings = {
+            python = {
+              analysis = {
+                typeCheckingMode = 'basic',
+                autoSearchPaths = true,
+                useLibraryCodeForTypes = true,
+              },
+            },
+          },
+        },
         gopls = {
           cmd = { 'gopls' },
           filetypes = { 'go', 'gomod', 'gowork', 'gotmpl' },
