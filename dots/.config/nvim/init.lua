@@ -1048,7 +1048,7 @@ require('lazy').setup({
               usePlaceholders = true,
               staticcheck = true,
               gofumpt = true,
-              analyses = {
+              analysis = {
                 unusedparams = true,
                 shadow = true,
                 nilness = true,
