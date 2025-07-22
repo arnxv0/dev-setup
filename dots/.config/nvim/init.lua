@@ -1048,13 +1048,12 @@ require('lazy').setup({
               usePlaceholders = true,
               staticcheck = true,
               gofumpt = true,
-              analysis = {
+              analyses = {
                 unusedparams = true,
                 shadow = true,
                 nilness = true,
                 unusedwrite = true,
                 fieldalignment = true,
-                ST1000 = true,
               },
             },
           },
