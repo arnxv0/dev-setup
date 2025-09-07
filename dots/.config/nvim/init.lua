@@ -768,7 +768,7 @@ require('lazy').setup({
       -- vim.keymap.set('n', '<leader>sf', builtin.find_files, { desc = '[S]earch [F]iles' })
       vim.keymap.set('n', '<leader>sf', function()
         builtin.find_files {
-          find_command = { 'rg', '--files', '--hidden', '-g', '!.git', '-g', '!.node_modules' },
+          find_command = { 'rg', '--files', '--hidden', '-g', '!.git', '-g', '!.node_modules', '-g', '!.venv'},
         }
       end, { desc = '[S]earch [F]iles' })
 
