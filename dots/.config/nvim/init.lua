@@ -768,7 +768,7 @@ require('lazy').setup({
       -- vim.keymap.set('n', '<leader>sf', builtin.find_files, { desc = '[S]earch [F]iles' })
       vim.keymap.set('n', '<leader>sf', function()
         builtin.find_files {
-          find_command = { 'rg', '--files', '--hidden', '-g', '!.git', '-g', '!.node_modules', '-g', '!.venv'},
+          find_command = { 'rg', '--files', '--hidden', '-g', '!.git', '-g', '!.node_modules', '-g', '!.venv' },
         }
       end, { desc = '[S]earch [F]iles' })
 
@@ -1015,6 +1015,20 @@ require('lazy').setup({
         astro = {},
         tailwindcss = {},
         ts_ls = {},
+        rust_analyzer = {
+          settings = {
+            ['rust-analyzer'] = {
+              cargo = {
+                allFeatures = true,
+              },
+              checkOnSave = {
+                command = 'clippy',
+              },
+            },
+          },
+        },
+        rust_hdl = {},
+        rustfmt = {},
         pyright = {
           filetypes = { 'python' },
           root_dir = require('lspconfig.util').root_pattern('.git', 'setup.py', 'setup.cfg', 'pyproject.toml', 'requirements.txt'),
@@ -1410,6 +1424,7 @@ require('lazy').setup({
         'vim',
         'vimdoc',
         'dart',
+        'rust',
       },
       -- Autoinstall languages that are not installed
       auto_install = true,
