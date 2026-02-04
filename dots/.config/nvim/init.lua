@@ -1030,6 +1030,9 @@ require('lazy').setup({
         },
         rust_hdl = {},
         rustfmt = {},
+        hls = {
+          filetypes = { 'haskell', 'lhaskell', 'cabal' },
+        },
         pyright = {
           filetypes = { 'python' },
           root_dir = require('lspconfig.util').root_pattern('.git', 'setup.py', 'setup.cfg', 'pyproject.toml', 'requirements.txt'),
@@ -1426,6 +1429,7 @@ require('lazy').setup({
         'vimdoc',
         'dart',
         'rust',
+        'haskell',
       },
       -- Autoinstall languages that are not installed
       auto_install = true,
