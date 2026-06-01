@@ -1,0 +1,21 @@
+font-family = "Hack Nerd Font Mono"
+font-size = 14
+font-thicken = true
+font-thicken-strength = 80
+
+theme = tokyonight_night
+
+window-padding-x = 8
+window-padding-y = 8
+window-padding-balance = true
+window-save-state = always
+macos-titlebar-style = tabs
+window-colorspace = display-p3
+
+cursor-style = bar
+cursor-style-blink = true
+
+shell-integration-features = true
+
+confirm-close-surface = false
+scrollbar = never

@@ -8,80 +8,81 @@ else
     echo "Homebrew is installed."
 fi
 
-# Update Homebrew to get the latest package information
-# echo "Updating Homebrew..."
-# brew update
-
-# Install lazygit, neovim, tmux, and other common tools
 echo "Installing dependencies..."
 
-# Install lazygit
+# ── lazygit ──────────────────────────────────────────────────────────────────
 if ! command -v lazygit &> /dev/null; then
     brew install lazygit
-    echo "lazygit installed successfully."
+    echo "lazygit installed."
 else
-    echo "lazygit is already installed."
+    echo "lazygit already installed."
 fi
 
-# Install neovim
+# ── Neovim (ensure 0.12+) ─────────────────────────────────────────────────────
 if ! command -v nvim &> /dev/null; then
     brew install neovim
-    echo "Neovim installed successfully."
+    echo "Neovim installed."
 else
-    echo "Neovim is already installed."
+    echo "Neovim found — upgrading to ensure 0.12+..."
+    brew upgrade neovim 2>/dev/null || echo "Neovim is already at the latest version."
 fi
 
-# Install tmux
+# ── tmux ─────────────────────────────────────────────────────────────────────
 if ! command -v tmux &> /dev/null; then
     brew install tmux
-    echo "tmux installed successfully."
+    echo "tmux installed."
 else
-    echo "tmux is already installed."
+    echo "tmux already installed."
 fi
 
-# Install git
+# ── git ──────────────────────────────────────────────────────────────────────
 if ! command -v git &> /dev/null; then
     brew install git
-    echo "git installed successfully."
+    echo "git installed."
 else
-    echo "git is already installed."
+    echo "git already installed."
 fi
 
-# Install ripgrep
-if ! command -v ripgrep &> /dev/null; then
+# ── ripgrep ──────────────────────────────────────────────────────────────────
+if ! command -v rg &> /dev/null; then
     brew install ripgrep
-    echo "ripgrep installed successfully."
+    echo "ripgrep installed."
 else
-    echo "ripgrep is already installed."
+    echo "ripgrep already installed."
 fi
 
-# Install fzf
+# ── fzf ──────────────────────────────────────────────────────────────────────
 if ! command -v fzf &> /dev/null; then
     brew install fzf
-    echo "fzf installed successfully."
+    echo "fzf installed."
 else
-    echo "fzf is already installed."
+    echo "fzf already installed."
 fi
 
-# Install tree-sitter
+# ── tree-sitter CLI (required by nvim-treesitter main branch to compile parsers)
 if ! command -v tree-sitter &> /dev/null; then
     brew install tree-sitter
-    echo "tree-sitter installed successfully."
+    echo "tree-sitter CLI installed."
 else
-    echo "tree-sitter is already installed."
+    echo "tree-sitter CLI already installed."
 fi
 
-# Install font-hack-nerd-font
-if ! command -v font-hack-nerd-font &> /dev/null; then
-    brew install font-hack-nerd-font
-    echo "font-hack-nerd-font installed successfully."
+# ── Hack Nerd Font ────────────────────────────────────────────────────────────
+# Used by Ghostty and Neovim (web-devicons, lualine icons, etc.)
+if ! brew list --cask font-hack-nerd-font &> /dev/null; then
+    brew install --cask font-hack-nerd-font
+    echo "font-hack-nerd-font installed."
 else
-    echo "font-hack-nerd-font is already installed."
+    echo "font-hack-nerd-font already installed."
 fi
 
+# ── Ghostty terminal emulator ─────────────────────────────────────────────────
+if ! brew list --cask ghostty &> /dev/null; then
+    brew install --cask ghostty
+    echo "Ghostty installed."
+else
+    echo "Ghostty already installed."
+fi
+
+echo ""
 echo "All dependencies are installed!"
-
-# Optional: upgrade all installed packages
-# Uncomment the following line if you want to upgrade all packages managed by Homebrew
-# brew upgrade
-
