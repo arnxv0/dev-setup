@@ -60,8 +60,9 @@ else
 fi
 
 # ── tree-sitter CLI (required by nvim-treesitter main branch to compile parsers)
+# NOTE: the `tree-sitter` formula is library-only; the CLI is `tree-sitter-cli`.
 if ! command -v tree-sitter &> /dev/null; then
-    brew install tree-sitter
+    brew install tree-sitter-cli
     echo "tree-sitter CLI installed."
 else
     echo "tree-sitter CLI already installed."

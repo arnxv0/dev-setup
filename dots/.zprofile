@@ -39,7 +39,7 @@ _fzf_history_widget() {
     if [[ -n "$cmd" ]]; then
         BUFFER="$cmd"
         CURSOR=${#BUFFER}
-        zle accept-line
+        zle redisplay
     fi
 }
 zle -N _fzf_history_widget

@@ -6,6 +6,10 @@ return {
     lazy   = false,
     config = function()
       local extra = {
+        -- base parsers (parity with the previous kickstart ensure_installed set)
+        'bash', 'c', 'diff', 'lua', 'luadoc',
+        'markdown', 'markdown_inline', 'query', 'vim', 'vimdoc',
+        -- languages
         'dart', 'rust', 'haskell', 'go', 'gomod', 'gosum',
         'typescript', 'javascript', 'tsx', 'astro',
         'css', 'html', 'json', 'toml', 'yaml', 'dockerfile',
