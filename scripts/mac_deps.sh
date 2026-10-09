@@ -85,5 +85,21 @@ else
     echo "Ghostty already installed."
 fi
 
+# ── TPM (tmux plugin manager) ─────────────────────────────────────────────────
+# Needed by tmux-resurrect / tmux-continuum, which capture session state.
+if [ ! -d "$HOME/.tmux/plugins/tpm" ]; then
+    git clone --depth 1 https://github.com/tmux-plugins/tpm "$HOME/.tmux/plugins/tpm" \
+        && echo "TPM installed."
+else
+    echo "TPM already installed."
+fi
+
+# Install/update the plugins tmux.conf declares, without needing prefix+I.
+if [ -x "$HOME/.tmux/plugins/tpm/bin/install_plugins" ]; then
+    "$HOME/.tmux/plugins/tpm/bin/install_plugins" > /dev/null 2>&1 \
+        && echo "tmux plugins installed." \
+        || echo "tmux plugin install skipped (run prefix+I inside tmux)."
+fi
+
 echo ""
 echo "All dependencies are installed!"

@@ -11,6 +11,30 @@ has_session() {
     tmux list-sessions | grep -q "^$1:"
 }
 
+snapshot_has() {
+    local snap="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/snapshot"
+    [ -f "$snap" ] || return 1
+    awk -F'\t' -v s="$1" '$1=="session" && $2==s {f=1} END{exit !f}' "$snap"
+}
+
+RESTORE="$HOME/.local/custom_setup_bin/tmux-restore"
+
+# Rebuild a project from the snapshot when one exists: its windows, their cwds,
+# nvim, and `claude --resume <session-id>` for the exact prior conversation.
+# Falls back to the generic layout below for projects we have never seen.
+start_session() {
+    local name="$1" dir="$2"
+    if snapshot_has "$name" && [ -x "$RESTORE" ]; then
+        if "$RESTORE" "$name" >/dev/null 2>&1; then
+            tmux display-message "restored $name from snapshot" 2>/dev/null
+            return 0
+        fi
+        tmux display-message "snapshot restore failed for $name; fresh session" 2>/dev/null
+    fi
+    tmux new-session -ds "$name" -c "$dir"
+    hydrate "$name" "$dir"
+}
+
 hydrate() {
     if [ -f $2/.tmux-sessionizer ]; then
         tmux send-keys -t $1 "source $2/.tmux-sessionizer" c-M
@@ -82,14 +106,13 @@ selected_name=$(basename "$selected" | tr . _)
 tmux_running=$(pgrep tmux)
 
 if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
-    tmux new-session -s $selected_name -c $selected
-    hydrate $selected_name $selected
+    start_session "$selected_name" "$selected"
+    tmux attach-session -t "$selected_name"
     exit 0
 fi
 
 if ! has_session $selected_name; then
-    tmux new-session -ds $selected_name -c $selected
-    hydrate $selected_name $selected
+    start_session "$selected_name" "$selected"
 fi
 
 switch_to $selected_name

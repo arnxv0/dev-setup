@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+#
+# Snapshot the live tmux state to a machine-local file so a restart is survivable.
+#
+# Captures sessions, window layouts, pane cwds, and — the part that is not
+# recoverable afterwards — the mapping from each `claude` pane to the specific
+# Claude Code session id it is running. Transcripts under ~/.claude/projects/
+# outlive the panes, but nothing on disk records WHICH pane held WHICH
+# conversation; that mapping is what this file preserves.
+#
+# Writes to ~/.local/share/tmux-state/snapshot by default (override with
+# $TMUX_SNAPSHOT_DIR or a path argument).
+#
+# Read-only with respect to the tmux server: tmux list-*, ps, and file reads.
+# Safe to run at any time, and meant to be re-run often (state drifts fast).
+
+set -uo pipefail
+
+parent_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+SNAPDIR="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}"
+OUT="${1:-$SNAPDIR/snapshot}"
+mkdir -p "$(dirname "$OUT")"
+
+if ! command -v tmux &> /dev/null; then
+    echo "tmux not installed; nothing to snapshot." >&2
+    exit 1
+fi
+
+if ! tmux list-sessions &> /dev/null; then
+    echo "No tmux server running; nothing to snapshot." >&2
+    exit 1
+fi
+
+TAB=$'\t'
+
+{
+    echo "# tmux state snapshot"
+    echo "# generated: $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    echo "# host: $(hostname -s)   tmux: $(tmux -V)"
+    echo "#"
+    echo "# Line types: session / window / pane / claude"
+    echo "# Fields are TAB-separated. 'window' carries tmux's own window_layout"
+    echo "# string, which is enough to rebuild exact pane geometry."
+    echo "#"
+
+    tmux list-sessions -F "session${TAB}#{session_name}${TAB}#{session_windows}${TAB}#{session_created}${TAB}#{session_path}"
+
+    tmux list-windows -a -F "window${TAB}#{session_name}${TAB}#{window_index}${TAB}#{window_name}${TAB}#{window_active}${TAB}#{window_layout}"
+
+    tmux list-panes -a -F "pane${TAB}#{session_name}${TAB}#{window_index}.#{pane_index}${TAB}#{pane_active}${TAB}#{pane_current_command}${TAB}#{pane_current_path}${TAB}#{pane_pid}"
+} > "$OUT"
+
+# ── claude pane -> session id ────────────────────────────────────────────────
+# Correlate each claude process's start time against the first `timestamp` in
+# each candidate transcript. A directory holding exactly one transcript is
+# unambiguous regardless of the delta (the process may have been resumed long
+# after the conversation began).
+python3 - "$OUT" <<'PY_EOF' 2>/dev/null || echo "# claude mapping skipped (python3 unavailable)" >> "$OUT"
+import datetime, glob, json, os, re, subprocess, sys
+
+out = sys.argv[1]
+
+def tmux(fmt):
+    r = subprocess.run(['tmux', 'list-panes', '-a', '-F', fmt],
+                       capture_output=True, text=True)
+    return [l for l in r.stdout.strip().split('\n') if l]
+
+panes = [l.split('\t') for l in tmux('#{pane_current_command}\t#{session_name}\t'
+                                     '#{window_index}\t#{pane_current_path}\t#{pane_pid}')]
+
+def slug(path):
+    # Verified against every real dir in ~/.claude/projects:
+    # '/', '_' and '.' all collapse to '-'; case is PRESERVED; the leading
+    # '/' becomes the leading '-' for free.
+    return re.sub(r'[/_.]', '-', path)
+
+def claude_pid(shell_pid):
+    kids = subprocess.run(['pgrep', '-P', shell_pid],
+                          capture_output=True, text=True).stdout.split()
+    for k in kids:
+        comm = subprocess.run(['ps', '-o', 'comm=', '-p', k],
+                              capture_output=True, text=True).stdout.strip()
+        if 'claude' in comm.lower() or 'node' in comm.lower():
+            return k
+    return kids[0] if kids else shell_pid
+
+def started(pid):
+    s = subprocess.run(['ps', '-o', 'lstart=', '-p', pid],
+                       capture_output=True, text=True).stdout.strip()
+    try:
+        return (datetime.datetime.strptime(s, '%a %b %d %H:%M:%S %Y')
+                .astimezone(datetime.timezone.utc))
+    except Exception:
+        return None
+
+def first_ts(path):
+    try:
+        with open(path) as fh:
+            for line in fh:
+                try:
+                    t = json.loads(line).get('timestamp')
+                except Exception:
+                    continue
+                if t:
+                    return datetime.datetime.fromisoformat(t.replace('Z', '+00:00'))
+    except Exception:
+        pass
+    return None
+
+rows = []
+for cmd, sess, win, cwd, pid in panes:
+    if cmd != 'claude':
+        continue
+    cpid = claude_pid(pid)
+    start = started(cpid)
+    cands = sorted(glob.glob(os.path.expanduser('~/.claude/projects/')
+                             + slug(cwd) + '/*.jsonl'))
+    best, delta, note = '', '', ''
+    if not cands:
+        note = 'UNRESOLVED-no-transcript-dir'
+    elif len(cands) == 1:
+        best = os.path.basename(cands[0])[:-6]
+        note = 'only-candidate'
+    else:
+        scored = []
+        for c in cands:
+            ft = first_ts(c)
+            if ft and start:
+                scored.append((abs((ft - start).total_seconds()), c))
+        if scored:
+            scored.sort()
+            d, c = scored[0]
+            best = os.path.basename(c)[:-6]
+            delta = f'{int(d)}s'
+            note = 'correlated' if d < 3600 else 'LOW-CONFIDENCE'
+        else:
+            note = f'UNRESOLVED-{len(cands)}-candidates'
+    rows.append(('claude', f'{sess}:{win}', cwd, cpid, best, delta, note,
+                 str(len(cands))))
+
+with open(out, 'a') as fh:
+    fh.write('#\n# claude\tpane\tcwd\tpid\tsession_id\tdelta\tnote\tcandidates\n')
+    for r in rows:
+        fh.write('\t'.join(r) + '\n')
+PY_EOF
+
+s=$(grep -c '^session' "$OUT")
+w=$(grep -c '^window'  "$OUT")
+p=$(grep -c '^pane'    "$OUT")
+c=$(grep -c '^claude'  "$OUT")
+echo "Wrote $(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
+echo "  $s sessions, $w windows, $p panes, $c claude panes mapped"
+
+unresolved=$(grep '^claude' "$OUT" | grep -c 'UNRESOLVED')
+lowconf=$(grep '^claude' "$OUT" | grep -c 'LOW-CONFIDENCE')
+[ "$unresolved" -gt 0 ] && echo "  WARNING: $unresolved claude pane(s) unresolved"
+[ "$lowconf" -gt 0 ]    && echo "  NOTE: $lowconf claude pane(s) low-confidence (verify with: claude -r)"
+exit 0

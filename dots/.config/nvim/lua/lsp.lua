@@ -9,27 +9,32 @@ return {
 
   'hrsh7th/cmp-nvim-lsp',
 
-  { 'WhoIsSethDaniel/mason-tool-installer.nvim' },
+  -- mason-tool-installer must load AFTER mason.setup() has run. Declaring it
+  -- both standalone and as a mason dependency made its plugin/ file execute
+  -- first, which errored in mason-registry and left the module cache poisoned
+  -- ("loop or previous error loading module 'mason-tool-installer'").
+  {
+    'WhoIsSethDaniel/mason-tool-installer.nvim',
+    dependencies = { 'williamboman/mason.nvim' },
+    opts = {
+      ensure_installed = {
+        'lua-language-server', 'gopls', 'rust-analyzer', 'pyright',
+        'typescript-language-server', 'clangd', 'astro-language-server',
+        'tailwindcss-language-server', 'haskell-language-server', 'vhdl-ls',
+        'stylua', 'prettier', 'clang-format',
+      },
+    },
+  },
 
   {
     'williamboman/mason.nvim',
     build = ':MasonUpdate',
     dependencies = {
-      'WhoIsSethDaniel/mason-tool-installer.nvim',
       'hrsh7th/cmp-nvim-lsp',
       'j-hui/fidget.nvim',
     },
     config = function()
       require('mason').setup()
-
-      require('mason-tool-installer').setup {
-        ensure_installed = {
-          'lua-language-server', 'gopls', 'rust-analyzer', 'pyright',
-          'typescript-language-server', 'clangd', 'astro-language-server',
-          'tailwindcss-language-server', 'haskell-language-server', 'vhdl-ls',
-          'stylua', 'prettier', 'clang-format',
-        },
-      }
 
       vim.lsp.config('*', {
         capabilities = vim.tbl_deep_extend(

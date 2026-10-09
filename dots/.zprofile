@@ -11,39 +11,10 @@ addToPath() {
 
 addToPath $HOME/.local/custom_setup_bin
 
-HISTFILE="$HOME/.zsh_history"
-HISTSIZE=50000
-SAVEHIST=50000
-setopt APPEND_HISTORY
-setopt INC_APPEND_HISTORY
-setopt HIST_IGNORE_DUPS
-setopt HIST_IGNORE_ALL_DUPS
-setopt HIST_FIND_NO_DUPS
-setopt HIST_IGNORE_SPACE
-setopt HIST_SAVE_NO_DUPS
-setopt HIST_REDUCE_BLANKS
-
-bindkey -s ^f "tmux-sessionizer\n"
-
-_fzf_history_widget() {
-    local cmd
-    if [[ -f "$HOME/.zsh_history" ]]; then
-        cmd=$(sed -E 's/^: [0-9]+:[0-9]+;//' "$HOME/.zsh_history" \
-              | awk '!a[$0]++' \
-              | fzf --tac --reverse --preview="echo {}" --height=40% --border)
-    else
-        cmd=$(history | sed 's/^[ ]*[0-9]*[ ]*//' \
-              | awk '!a[$0]++' \
-              | fzf --tac --reverse --preview="echo {}" --height=40% --border)
-    fi
-    if [[ -n "$cmd" ]]; then
-        BUFFER="$cmd"
-        CURSOR=${#BUFFER}
-        zle redisplay
-    fi
-}
-zle -N _fzf_history_widget
-bindkey '^r' _fzf_history_widget
+# History config and the fzf history widgets deliberately live in
+# ~/.dev-setup.zsh, sourced from ~/.zshrc. macOS /etc/zshrc runs AFTER this
+# file and resets HISTFILE/HISTSIZE/SAVEHIST, so setting them here has no
+# effect. See dots/.dev-setup.zsh.
 
 parse_git_branch() {
     git branch 2> /dev/null | sed -n -e 's/^\* \(.*\)/[\1]/p'

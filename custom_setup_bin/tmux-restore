@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+#
+# Restore tmux sessions from a snapshot written by tmux-snapshot.
+#
+# Selective by design: restores ONE named session by default, so you rebuild
+# only what you need instead of spawning every pane at once.
+#
+# Safety properties:
+#   * NEVER touches a session that already exists -- it is skipped, not merged
+#     and not killed. Nothing live can be clobbered by running this.
+#   * New sessions are created detached; your current view is not yanked around.
+#   * --dry-run prints the exact tmux commands without running any of them.
+#   * Honours $TMUX_SOCKET so a restore can be rehearsed on a throwaway server
+#     (TMUX_SOCKET=rtest tmux-restore foo) with zero risk to the real one.
+#
+# Written for bash 3.2 (macOS system bash): no mapfile, no assoc arrays.
+
+set -uo pipefail
+
+parent_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
+SNAP="${SNAP:-${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/snapshot}"
+DRY=0
+ALL=0
+PLACEHOLDER=9999   # scratch window index, killed once real windows exist
+
+TM=(tmux)
+[ -n "${TMUX_SOCKET:-}" ] && TM=(tmux -L "$TMUX_SOCKET")
+
+usage() {
+    cat <<USAGE
+usage: tmux-restore [options] <session-name> [session-name ...]
+       tmux-restore --list
+       tmux-restore --all
+
+options:
+  --list        show sessions in the snapshot and whether each is already live
+  --all         restore every session in the snapshot (asks for confirmation)
+  --dry-run     print what would happen; change nothing
+  -h, --help    this message
+
+env:
+  SNAP=<path>          use a different snapshot file
+  TMUX_SOCKET=<name>   operate on 'tmux -L <name>' instead of the default server
+
+Existing sessions are always skipped, never modified.
+USAGE
+}
+
+# field-exact lookups -- awk, not grep, so index 3 never matches 31
+snap_sessions()  { awk -F'\t' '$1=="session" {print $2}' "$SNAP"; }
+snap_has_sess()  { awk -F'\t' -v s="$1" '$1=="session" && $2==s {f=1} END{exit !f}' "$SNAP"; }
+snap_windows()   { awk -F'\t' -v s="$1" '$1=="window" && $2==s {print}' "$SNAP" | sort -t"$(printf '\t')" -k3,3n; }
+snap_panes()     { awk -F'\t' -v s="$1" -v w="$2" '
+                     $1=="pane" && $2==s { split($3,a,"."); if (a[1]==w) print a[2]"\t"$5"\t"$6 }
+                   ' "$SNAP" | sort -k1,1n; }
+snap_claude_id() { awk -F'\t' -v k="$1" '$1=="claude" && $2==k {print $5; exit}' "$SNAP"; }
+
+TARGETS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dry-run) DRY=1 ;;
+        --all)     ALL=1 ;;
+        --list)
+            [ -f "$SNAP" ] || { echo "no snapshot at $SNAP" >&2; exit 1; }
+            printf '%-32s %7s %7s  %s\n' SESSION WINDOWS STATUS PATH
+            while IFS="$(printf '\t')" read -r _ name nwin _ spath; do
+                if "${TM[@]}" has-session -t "=$name" 2>/dev/null; then st=live; else st=absent; fi
+                printf '%-32s %7s %7s  %s\n' "$name" "$nwin" "$st" "$spath"
+            done < <(awk -F'\t' '$1=="session"' "$SNAP")
+            exit 0 ;;
+        -h|--help) usage; exit 0 ;;
+        -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *)  TARGETS+=("$1") ;;
+    esac
+    shift
+done
+
+[ -f "$SNAP" ] || { echo "no snapshot at $SNAP -- run tmux-snapshot first" >&2; exit 1; }
+
+if [ "$ALL" -eq 1 ]; then
+    while IFS= read -r s; do TARGETS+=("$s"); done < <(snap_sessions)
+    echo "About to restore ${#TARGETS[@]} session(s). This starts a lot of processes."
+    printf 'Continue? [y/N] '
+    read -r reply
+    case "$reply" in [yY]*) ;; *) echo "aborted."; exit 0 ;; esac
+fi
+
+[ "${#TARGETS[@]}" -gt 0 ] || { usage >&2; exit 2; }
+
+run() {
+    if [ "$DRY" -eq 1 ]; then printf '  + %s\n' "$*"; else "$@"; fi
+}
+
+restored=0; skipped=0; missing=0; incomplete=0
+
+for sess in "${TARGETS[@]}"; do
+    if ! snap_has_sess "$sess"; then
+        echo "!! '$sess' is not in the snapshot -- skipping"
+        missing=$((missing+1)); continue
+    fi
+
+    if "${TM[@]}" has-session -t "=$sess" 2>/dev/null; then
+        echo "== $sess already live -- skipping (never clobbered)"
+        skipped=$((skipped+1)); continue
+    fi
+
+    wins=()
+    while IFS= read -r l; do wins+=("$l"); done < <(snap_windows "$sess")
+    if [ "${#wins[@]}" -eq 0 ]; then
+        echo "!! $sess has no windows recorded -- skipping"
+        missing=$((missing+1)); continue
+    fi
+
+    echo "== restoring $sess (${#wins[@]} windows)"
+
+    # Create the session holding only a scratch window parked at a high index,
+    # so every real window can be created at its exact recorded index without
+    # ever colliding with the auto-created first window.
+    run "${TM[@]}" new-session -d -s "$sess" -c "$HOME"
+    if [ "$DRY" -eq 0 ]; then
+        # NOTE: 'display -p' returns empty with no attached client, which is
+        # always the case for a freshly detached session. list-windows works.
+        cur=$("${TM[@]}" list-windows -t "=$sess" -F '#{window_index}' 2>/dev/null | head -1)
+        if [ -z "$cur" ]; then
+            echo "!! could not determine scratch window index for $sess -- skipping"
+            "${TM[@]}" kill-session -t "=$sess" 2>/dev/null
+            missing=$((missing+1)); continue
+        fi
+        if ! "${TM[@]}" move-window -s "=$sess:$cur" -t "=$sess:$PLACEHOLDER" 2>/dev/null; then
+            echo "!! could not park scratch window for $sess -- skipping"
+            "${TM[@]}" kill-session -t "=$sess" 2>/dev/null
+            missing=$((missing+1)); continue
+        fi
+    else
+        printf '  + %s\n' "${TM[*]} move-window -s =$sess:<auto> -t =$sess:$PLACEHOLDER"
+    fi
+
+    for wline in "${wins[@]}"; do
+        widx=$(printf '%s' "$wline"  | cut -f3)
+        wname=$(printf '%s' "$wline" | cut -f4)
+        wlayout=$(printf '%s' "$wline" | cut -f6)
+
+        panes=()
+        while IFS= read -r l; do panes+=("$l"); done < <(snap_panes "$sess" "$widx")
+        [ "${#panes[@]}" -eq 0 ] && continue
+
+        p1cwd=$(printf '%s' "${panes[0]}" | cut -f3)
+        [ -d "$p1cwd" ] || p1cwd="$HOME"
+
+        run "${TM[@]}" new-window -d -t "=$sess:$widx" -n "$wname" -c "$p1cwd"
+
+        i=1
+        while [ "$i" -lt "${#panes[@]}" ]; do
+            pcwd=$(printf '%s' "${panes[$i]}" | cut -f3)
+            [ -d "$pcwd" ] || pcwd="$HOME"
+            run "${TM[@]}" split-window -d -t "=$sess:$widx" -c "$pcwd"
+            i=$((i+1))
+        done
+        if [ "${#panes[@]}" -gt 1 ] && [ -n "$wlayout" ]; then
+            run "${TM[@]}" select-layout -t "=$sess:$widx" "$wlayout"
+        fi
+
+        for pline in "${panes[@]}"; do
+            pidx=$(printf '%s' "$pline" | cut -f1)
+            pcmd=$(printf '%s' "$pline" | cut -f2)
+            target="=$sess:$widx.$pidx"
+            case "$pcmd" in
+                claude)
+                    sid=$(snap_claude_id "$sess:$widx")
+                    if [ -n "$sid" ]; then
+                        run "${TM[@]}" send-keys -t "$target" "claude --resume $sid" C-m
+                        echo "   claude --resume ${sid%%-*}  <- $sess:$widx"
+                    else
+                        run "${TM[@]}" send-keys -t "$target" "claude --continue" C-m
+                        echo "   claude --continue (no id recorded)  <- $sess:$widx"
+                    fi ;;
+                nvim|vim)
+                    run "${TM[@]}" send-keys -t "$target" "$pcmd ." C-m ;;
+                zsh|bash|sh|"") : ;;
+                *)  echo "   note: $sess:$widx ran '$pcmd' -- left as a plain shell" ;;
+            esac
+        done
+    done
+
+    # drop the scratch window now that the real ones exist
+    run "${TM[@]}" kill-window -t "=$sess:$PLACEHOLDER"
+
+    firstwin=$(printf '%s' "${wins[0]}" | cut -f3)
+    if [ "$DRY" -eq 0 ]; then
+        "${TM[@]}" select-window -t "=$sess:$firstwin" 2>/dev/null
+        got=$("${TM[@]}" list-windows -t "=$sess" -F x 2>/dev/null | wc -l | tr -d ' ')
+        if [ "$got" != "${#wins[@]}" ]; then
+            echo "!! $sess: expected ${#wins[@]} windows, got $got -- INCOMPLETE"
+            incomplete=$((incomplete+1))
+        else
+            echo "   ok: ${#wins[@]}/${#wins[@]} windows"
+            restored=$((restored+1))
+        fi
+    else
+        restored=$((restored+1))
+    fi
+done
+
+echo
+echo "restored=$restored  skipped(live)=$skipped  not-in-snapshot=$missing  incomplete=$incomplete"
+if [ "$DRY" -eq 1 ]; then
+    echo "(dry run -- nothing was changed)"
+else
+    echo "attach with: ${TM[*]} attach -t <session>"
+fi
+if [ "$incomplete" -gt 0 ]; then exit 1; fi
+exit 0

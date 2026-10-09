@@ -1,2 +1,7 @@
 # Ignore macOS system files
 .DS_Store
+
+# Machine-local tmux state. Holds absolute paths and Claude Code session ids,
+# so it must not be committed to a public repo. Regenerate with
+# scripts/snapshot-tmux.sh -- it is a safety net, not configuration.
+tmux-state.snapshot
