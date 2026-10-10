@@ -37,6 +37,9 @@ options:
   --list        show sessions in the snapshot and whether each is already live
   --all         restore every session in the snapshot (asks for confirmation)
   --dry-run     print what would happen; change nothing
+  --history     list dated snapshots available to roll back to
+  --from S      restore from a dated snapshot instead of the current one
+                (S is a timestamp from --history, or a file path)
   -a, --attach  after restoring, attach to it (or switch, if already in tmux).
                 Works with no tmux server running -- one command from a bare
                 terminal is enough; you do not need to start tmux first.
@@ -59,11 +62,52 @@ snap_panes()     { awk -F'\t' -v s="$1" -v w="$2" '
                    ' "$SNAP" | sort -k1,1n; }
 snap_claude_id() { awk -F'\t' -v k="$1" '$1=="claude" && $2==k {print $5; exit}' "$SNAP"; }
 
+# Find the saved session for a FOLDER, not a name.
+#
+# This is the lookup that matters: you pick a directory with prefix+f, and the
+# saved state should be found regardless of what the session happened to be
+# called. Matches the session's own path first, then any pane's cwd. If two
+# sessions cover the same folder (e.g. "disd" and "CS249-discord-service" both
+# live in CS249-discord-service), the one with more windows wins.
+snap_session_for_path() {
+    local dir="${1%/}"
+    awk -F'\t' -v d="$dir" '
+        $1=="session" { wins[$2]=$3; if ($5==d) hit[$2]=1 }
+        $1=="pane"    { if ($6==d) hit[$2]=1 }
+        END { best=""; bw=-1
+              for (s in hit) if (wins[s]+0 > bw) { bw=wins[s]+0; best=s }
+              if (best!="") print best }
+    ' "$SNAP"
+}
+
 TARGETS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
         -a|--attach) ATTACH=1 ;;
+        --history)
+            hd="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/history"
+            echo "dated snapshots in ${hd/#$HOME/~} (newest first):"
+            ls -t "$hd"/snapshot-*.tsv 2>/dev/null | while IFS= read -r f; do
+                printf '  %-26s %3s sessions  %4s panes  %s\n' \
+                    "$(basename "$f" .tsv | sed 's/^snapshot-//')" \
+                    "$(grep -c '^session' "$f")" "$(grep -c '^pane' "$f")" \
+                    "$(grep -c '^claude' "$f") claude"
+            done
+            [ -d "$hd" ] || echo "  (none yet)"
+            exit 0 ;;
+        --from)
+            shift
+            f="${1:-}"
+            hd="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/history"
+            if   [ -f "$f" ]; then SNAP="$f"
+            elif [ -f "$hd/snapshot-$f.tsv" ]; then SNAP="$hd/snapshot-$f.tsv"
+            else
+                # allow a prefix, e.g. --from 20261010
+                cand=$(ls -t "$hd"/snapshot-"$f"*.tsv 2>/dev/null | head -1)
+                [ -n "$cand" ] && SNAP="$cand" || { echo "no snapshot matching: $f" >&2; exit 1; }
+            fi
+            echo "using snapshot: ${SNAP/#$HOME/~}" ;;
         --all)     ALL=1 ;;
         --list)
             [ -f "$SNAP" ] || { echo "no snapshot at $SNAP" >&2; exit 1; }
@@ -100,6 +144,17 @@ run() {
 restored=0; skipped=0; missing=0; incomplete=0
 
 for sess in "${TARGETS[@]}"; do
+    # a directory argument is resolved to whatever session was saved for it
+    if [ -d "$sess" ]; then
+        resolved=$(snap_session_for_path "$sess")
+        if [ -n "$resolved" ]; then
+            echo "== $sess -> saved session '$resolved'"
+            sess="$resolved"
+        else
+            echo "!! no saved session for folder $sess"
+            missing=$((missing+1)); continue
+        fi
+    fi
     if ! snap_has_sess "$sess"; then
         echo "!! '$sess' is not in the snapshot -- skipping"
         missing=$((missing+1)); continue

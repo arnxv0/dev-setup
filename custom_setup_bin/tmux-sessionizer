@@ -11,6 +11,52 @@ has_session() {
     tmux list-sessions | grep -q "^$1:"
 }
 
+# Session name = <2-char parent hint>-<folder>.
+#
+# The old scheme was just the folder basename, which collided constantly:
+# ~/Desktop/Flutter/Projects/blit and ~/Desktop/WebDev/blit both became "blit",
+# so picking either one switched you into whichever session already existed.
+# Same for katkode-website, pointiv, and generic names like src/public/static.
+#
+# The parent directory disambiguates them (pr-blit vs we-blit) and doubles as a
+# reminder of where you are. A 4-char path hash is appended only if two paths
+# somehow still produce the same name.
+session_name_for() {
+    local dir="$1" base parent pfx name
+    base=$(basename "$dir" | tr . _)
+    if [ "$(dirname "$dir")" = "$HOME" ]; then
+        parent="home"
+    else
+        parent=$(basename "$(dirname "$dir")")
+    fi
+    pfx=$(printf '%s' "$parent" | tr -cd '[:alnum:]' | cut -c1-2 | tr '[:upper:]' '[:lower:]')
+    [ -z "$pfx" ] && pfx="xx"
+    name="$pfx-$base"
+    # tmux forbids '.' and ':' in session names
+    printf '%s' "$name" | tr '.:' '__'
+}
+
+legacy_session_name_for() {
+    basename "$1" | tr . _
+}
+
+# Find the saved session for a FOLDER. This is the primary lookup: what you
+# picked is a directory, so saved state should be found by path regardless of
+# what the session was named. Also recovers sessions whose name does not match
+# their folder at all (e.g. "disd" living in CS249-discord-service).
+snapshot_session_for_path() {
+    local snap="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/snapshot"
+    [ -f "$snap" ] || return 1
+    local dir="${1%/}"
+    awk -F'\t' -v d="$dir" '
+        $1=="session" { wins[$2]=$3; if ($5==d) hit[$2]=1 }
+        $1=="pane"    { if ($6==d) hit[$2]=1 }
+        END { best=""; bw=-1
+              for (s in hit) if (wins[s]+0 > bw) { bw=wins[s]+0; best=s }
+              if (best!="") print best }
+    ' "$snap"
+}
+
 snapshot_has() {
     local snap="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/snapshot"
     [ -f "$snap" ] || return 1
@@ -107,7 +153,28 @@ if [[ -z $selected ]]; then
     exit 0
 fi
 
-selected_name=$(basename "$selected" | tr . _)
+new_name=$(session_name_for "$selected")
+legacy_name=$(legacy_session_name_for "$selected")
+
+# Backward compatible: the 42 sessions already in the snapshot use the old
+# basename-only scheme. Prefer whatever already exists live, then whatever the
+# snapshot knows, and only fall back to the new scheme for genuinely new work.
+saved_name=$(snapshot_session_for_path "$selected" 2>/dev/null)
+
+if has_session "$new_name" 2>/dev/null; then
+    selected_name="$new_name"            # already open under the new scheme
+elif has_session "$legacy_name" 2>/dev/null; then
+    selected_name="$legacy_name"         # already open under the old scheme
+elif [ -n "$saved_name" ] && has_session "$saved_name" 2>/dev/null; then
+    selected_name="$saved_name"          # already open under its saved name
+elif [ -n "$saved_name" ]; then
+    selected_name="$saved_name"          # saved state exists for this FOLDER
+elif snapshot_has "$legacy_name"; then
+    selected_name="$legacy_name"
+else
+    selected_name="$new_name"            # genuinely new project
+fi
+
 tmux_running=$(pgrep tmux)
 
 if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then

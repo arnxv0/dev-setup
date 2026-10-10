@@ -19,7 +19,13 @@ set -uo pipefail
 parent_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 SNAPDIR="${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}"
 OUT="${1:-$SNAPDIR/snapshot}"
-mkdir -p "$(dirname "$OUT")"
+HISTDIR="$SNAPDIR/history"
+# Retention: every snapshot for the last day, then one per day. Continuum fires
+# every 15 min (~96/day), so keeping them all for months would be ~170MB of
+# near-identical files; thinning to daily keeps ~90 days in a few MB.
+KEEP_ALL_HOURS="${TMUX_SNAPSHOT_KEEP_ALL_HOURS:-24}"
+KEEP_DAYS="${TMUX_SNAPSHOT_KEEP_DAYS:-120}"
+mkdir -p "$(dirname "$OUT")" "$HISTDIR"
 
 if ! command -v tmux &> /dev/null; then
     echo "tmux not installed; nothing to snapshot." >&2
@@ -185,12 +191,45 @@ with open(out, 'a') as fh:
         fh.write('\t'.join(r) + '\n')
 PY_EOF
 
+# ── history ──────────────────────────────────────────────────────────────────
+# Keep a dated copy so a folder's pane state can be rolled back weeks later.
+STAMP=$(date -u '+%Y%m%dT%H%M%SZ')
+cp "$OUT" "$HISTDIR/snapshot-$STAMP.tsv" 2>/dev/null
+
+python3 - "$HISTDIR" "$KEEP_ALL_HOURS" "$KEEP_DAYS" <<'PRUNE' 2>/dev/null
+import os, re, sys, time
+d, keep_all_h, keep_days = sys.argv[1], float(sys.argv[2]), float(sys.argv[3])
+now = time.time()
+pat = re.compile(r'^snapshot-(\d{8})T\d{6}Z\.tsv$')
+files = []
+for n in os.listdir(d):
+    m = pat.match(n)
+    if m:
+        files.append((os.path.getmtime(os.path.join(d, n)), m.group(1), n))
+files.sort(reverse=True)            # newest first
+seen_days, kept = set(), 0
+for mtime, day, name in files:
+    age_h = (now - mtime) / 3600.0
+    if age_h <= keep_all_h:
+        kept += 1
+        continue                     # recent: keep everything
+    if age_h / 24.0 > keep_days:
+        os.remove(os.path.join(d, name))
+        continue                     # too old
+    if day in seen_days:
+        os.remove(os.path.join(d, name))
+        continue                     # already have a newer one that day
+    seen_days.add(day)
+    kept += 1
+PRUNE
+
 s=$(grep -c '^session' "$OUT")
 w=$(grep -c '^window'  "$OUT")
 p=$(grep -c '^pane'    "$OUT")
 c=$(grep -c '^claude'  "$OUT")
 echo "Wrote $(cd "$(dirname "$OUT")" && pwd)/$(basename "$OUT")"
 echo "  $s sessions, $w windows, $p panes, $c claude panes mapped"
+echo "  history: $(ls "$HISTDIR" 2>/dev/null | wc -l | tr -d ' ') snapshots kept in ${HISTDIR/#$HOME/~}"
 
 unresolved=$(grep '^claude' "$OUT" | grep -c 'UNRESOLVED')
 lowconf=$(grep '^claude' "$OUT" | grep -c 'LOW-CONFIDENCE')
