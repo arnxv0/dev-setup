@@ -1,12 +1,34 @@
 #!/usr/bin/env bash
 
-# Check if Homebrew is installed, and install it if not
+set -uo pipefail
+
+# Homebrew is a hard prerequisite: every tool below comes from it. Exiting 0
+# here used to report success while installing nothing, after which run.sh
+# cheerfully deployed configs referencing nvim/tmux/fzf that did not exist.
 if ! command -v brew &> /dev/null; then
-    echo "Homebrew is not installed."
-    exit 0
-else
-    echo "Homebrew is installed."
+    # Apple Silicon and Intel install to different prefixes; pick up either if
+    # brew is present but not yet on PATH (common on a fresh machine).
+    for p in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+        if [ -x "$p" ]; then
+            eval "$("$p" shellenv)"
+            break
+        fi
+    done
 fi
+
+if ! command -v brew &> /dev/null; then
+    cat >&2 <<'MSG'
+Homebrew is required and was not found.
+
+Install it, then re-run ./run.sh:
+  /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+Afterwards make sure brew is on PATH (the installer prints the exact line;
+on Apple Silicon it is: eval "$(/opt/homebrew/bin/brew shellenv)").
+MSG
+    exit 1
+fi
+echo "Homebrew found: $(command -v brew)"
 
 echo "Installing dependencies..."
 

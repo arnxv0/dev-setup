@@ -228,7 +228,13 @@ for sess in "${TARGETS[@]}"; do
         else
             case "$p1cmd" in
                 nvim|vim)
-                    if [ -f "$p1cwd/Session.vim" ]; then
+                    # Only use -S if the session file actually holds buffers.
+                    # vim-obsession writes Session.vim as soon as nvim starts,
+                    # so a file that was created while only the tree was open
+                    # has zero 'badd' lines -- `nvim -S` on that gives an EMPTY
+                    # editor, strictly worse than `nvim .`. Checked against the
+                    # real files: all of them had 0 badd lines.
+                    if [ -f "$p1cwd/Session.vim" ] && grep -q '^badd ' "$p1cwd/Session.vim" 2>/dev/null; then
                         typed="$p1cmd -S Session.vim"
                     else
                         typed="$p1cmd ."
