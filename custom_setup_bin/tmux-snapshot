@@ -27,12 +27,17 @@ KEEP_ALL_HOURS="${TMUX_SNAPSHOT_KEEP_ALL_HOURS:-24}"
 KEEP_DAYS="${TMUX_SNAPSHOT_KEEP_DAYS:-120}"
 mkdir -p "$(dirname "$OUT")" "$HISTDIR"
 
+# Honour TMUX_SOCKET so a snapshot can be taken against a throwaway server
+# (tmux -L <name>) for testing without touching the real one.
+TM=(tmux)
+[ -n "${TMUX_SOCKET:-}" ] && TM=(tmux -L "$TMUX_SOCKET")
+
 if ! command -v tmux &> /dev/null; then
     echo "tmux not installed; nothing to snapshot." >&2
     exit 1
 fi
 
-if ! tmux list-sessions &> /dev/null; then
+if ! "${TM[@]}" list-sessions &> /dev/null; then
     echo "No tmux server running; nothing to snapshot." >&2
     exit 1
 fi
@@ -51,11 +56,11 @@ trap 'rm -f "$STAGE"' EXIT
     echo "# string, which is enough to rebuild exact pane geometry."
     echo "#"
 
-    tmux list-sessions -F "session${TAB}#{session_name}${TAB}#{session_windows}${TAB}#{session_created}${TAB}#{session_path}"
+    "${TM[@]}" list-sessions -F "session${TAB}#{session_name}${TAB}#{session_windows}${TAB}#{session_created}${TAB}#{session_path}"
 
-    tmux list-windows -a -F "window${TAB}#{session_name}${TAB}#{window_index}${TAB}#{window_name}${TAB}#{window_active}${TAB}#{window_layout}"
+    "${TM[@]}" list-windows -a -F "window${TAB}#{session_name}${TAB}#{window_index}${TAB}#{window_name}${TAB}#{window_active}${TAB}#{window_layout}"
 
-    tmux list-panes -a -F "pane${TAB}#{session_name}${TAB}#{window_index}.#{pane_index}${TAB}#{pane_active}${TAB}#{pane_current_command}${TAB}#{pane_current_path}${TAB}#{pane_pid}"
+    "${TM[@]}" list-panes -a -F "pane${TAB}#{session_name}${TAB}#{window_index}.#{pane_index}${TAB}#{pane_active}${TAB}#{pane_current_command}${TAB}#{pane_current_path}${TAB}#{pane_pid}"
 } > "$STAGE"
 
 # ── claude pane -> session id ────────────────────────────────────────────────
@@ -68,8 +73,12 @@ import datetime, glob, json, os, re, subprocess, sys
 
 out = sys.argv[1]
 
+TMUX_CMD = ['tmux']
+if os.environ.get('TMUX_SOCKET'):
+    TMUX_CMD = ['tmux', '-L', os.environ['TMUX_SOCKET']]
+
 panes = [l.split('\t') for l in subprocess.run(
-    ['tmux', 'list-panes', '-a', '-F',
+    TMUX_CMD + ['list-panes', '-a', '-F',
      '#{pane_current_command}\t#{session_name}\t#{window_index}\t'
      '#{pane_current_path}\t#{pane_pid}'],
     capture_output=True, text=True).stdout.strip().split('\n') if l]

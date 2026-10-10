@@ -16,14 +16,33 @@ return {
   {
     'WhoIsSethDaniel/mason-tool-installer.nvim',
     dependencies = { 'williamboman/mason.nvim' },
-    opts = {
-      ensure_installed = {
+    config = function()
+      -- 'vhdl-ls' was in this list and does not exist in mason's registry at
+      -- all (only 'vhdl-style-guide'), which threw on every startup:
+      --   Cannot find package "vhdl-ls"
+      -- Filter against the registry so a package being renamed or dropped
+      -- upstream degrades to a warning instead of breaking the config.
+      local want = {
         'lua-language-server', 'gopls', 'rust-analyzer', 'pyright',
         'typescript-language-server', 'clangd', 'astro-language-server',
-        'tailwindcss-language-server', 'haskell-language-server', 'vhdl-ls',
+        'tailwindcss-language-server', 'haskell-language-server',
         'stylua', 'prettier', 'clang-format',
-      },
-    },
+      }
+      local ok, mr = pcall(require, 'mason-registry')
+      local install, missing = {}, {}
+      for _, pkg in ipairs(want) do
+        if not ok or mr.has_package(pkg) then
+          table.insert(install, pkg)
+        else
+          table.insert(missing, pkg)
+        end
+      end
+      if #missing > 0 then
+        vim.notify('mason: unknown package(s) skipped: ' .. table.concat(missing, ', '),
+          vim.log.levels.WARN)
+      end
+      require('mason-tool-installer').setup { ensure_installed = install }
+    end,
   },
 
   {

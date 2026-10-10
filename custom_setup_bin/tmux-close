@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+#
+# Snapshot a session's state, then close it.
+#
+# Closing a session is already non-destructive: tmux-snapshot merges, so a
+# session that is no longer live is carried forward with whatever was last
+# captured. The catch is WHEN it was captured -- continuum saves every 15
+# minutes, so just killing a session can lose up to 15 minutes of layout
+# changes from its saved state.
+#
+# This takes a snapshot first, so the saved state is exactly what was on screen
+# when you closed it.
+
+set -uo pipefail
+
+SNAPSHOT="$HOME/.local/custom_setup_bin/tmux-snapshot"
+TM=(tmux)
+[ -n "${TMUX_SOCKET:-}" ] && TM=(tmux -L "$TMUX_SOCKET")
+
+usage() {
+    cat <<USAGE
+usage: tmux-close [session]        snapshot that session, then close it
+       tmux-close                  same, for the session you are in
+       tmux-close --save [session] snapshot only; do not close
+
+The snapshot is merged, so every other project's saved state is untouched.
+Reopen later with:  tmux-restore -a <session>   or   prefix+f on its folder
+USAGE
+}
+
+SAVE_ONLY=0
+TARGET=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --save) SAVE_ONLY=1 ;;
+        -h|--help) usage; exit 0 ;;
+        -*) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *) TARGET="$1" ;;
+    esac
+    shift
+done
+
+if [ -z "$TARGET" ]; then
+    TARGET=$("${TM[@]}" display -p '#S' 2>/dev/null)
+    [ -n "$TARGET" ] || { echo "not inside tmux; name a session" >&2; exit 2; }
+fi
+
+"${TM[@]}" has-session -t "=$TARGET" 2>/dev/null \
+    || { echo "no such session: $TARGET" >&2; exit 1; }
+
+# Capture while it is still running -- this is the whole point.
+if [ -x "$SNAPSHOT" ]; then
+    if "$SNAPSHOT" >/dev/null 2>&1; then
+        echo "saved state of '$TARGET'"
+    else
+        echo "WARNING: snapshot failed; not closing '$TARGET'" >&2
+        exit 1
+    fi
+else
+    echo "WARNING: $SNAPSHOT missing; not closing '$TARGET'" >&2
+    exit 1
+fi
+
+[ "$SAVE_ONLY" -eq 1 ] && { echo "(--save: left open)"; exit 0; }
+
+# Switch away first if we are closing the session we are attached to, so the
+# client lands somewhere instead of being detached.
+if [ "$("${TM[@]}" display -p '#S' 2>/dev/null)" = "$TARGET" ]; then
+    "${TM[@]}" switch-client -l 2>/dev/null || "${TM[@]}" switch-client -n 2>/dev/null || true
+fi
+
+"${TM[@]}" kill-session -t "=$TARGET" 2>/dev/null \
+    && echo "closed '$TARGET' -- reopen with: tmux-restore -a $TARGET"

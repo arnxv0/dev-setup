@@ -54,16 +54,20 @@ if not vim.uv.fs_stat(lazypath) then
 end
 vim.opt.rtp:prepend(lazypath)
 
+-- Specs live in lua/plugins/ deliberately. With them directly in lua/, a file
+-- like lua/telescope.lua SHADOWS the plugin module: require('telescope') then
+-- returned the lazy spec table (no .setup), breaking the config with
+-- "attempt to call field 'setup' (a nil value)".
 require('lazy').setup({
-  { import = 'editor' },
-  { import = 'ui' },
-  { import = 'treesitter' },
-  { import = 'lsp' },
-  { import = 'completion' },
-  { import = 'telescope' },
-  { import = 'flutter' },
-  { import = 'extras' },
-  { import = 'custom' },
+  { import = 'plugins.editor' },
+  { import = 'plugins.ui' },
+  { import = 'plugins.treesitter' },
+  { import = 'plugins.lsp' },
+  { import = 'plugins.completion' },
+  { import = 'plugins.telescope' },
+  { import = 'plugins.flutter' },
+  { import = 'plugins.extras' },
+  { import = 'plugins.custom' },
 }, {
   ui = {
     icons = vim.g.have_nerd_font and {} or {
