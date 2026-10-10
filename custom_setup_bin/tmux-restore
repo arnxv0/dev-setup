@@ -67,17 +67,26 @@ snap_claude_id() { awk -F'\t' -v k="$1" '$1=="claude" && $2==k {print $5; exit}'
 #
 # This is the lookup that matters: you pick a directory with prefix+f, and the
 # saved state should be found regardless of what the session happened to be
-# called. Matches the session's own path first, then any pane's cwd. If two
-# sessions cover the same folder (e.g. "disd" and "CS249-discord-service" both
-# live in CS249-discord-service), the one with more windows wins.
+# called. A session whose own start path is the folder wins; otherwise the one
+# with the largest share of its panes in the folder; windows break ties (so
+# "disd" with 6 windows still beats "CS249-discord-service" for that folder).
 snap_session_for_path() {
     local dir="${1%/}"
     awk -F'\t' -v d="$dir" '
-        $1=="session" { wins[$2]=$3; if ($5==d) hit[$2]=1 }
-        $1=="pane"    { if ($6==d) hit[$2]=1 }
-        END { best=""; bw=-1
-              for (s in hit) if (wins[s]+0 > bw) { bw=wins[s]+0; best=s }
-              if (best!="") print best }
+        $1=="session" { wins[$2]=$3; if ($5==d) own[$2]=1 }
+        $1=="pane"    { tot[$2]++; if ($6==d) m[$2]++ }
+        END {
+            # Score, highest wins:
+            #   +1000 the session itself lives in d (its start path)
+            #   +0..100 share of the session'"'"'s panes that sit in d
+            #   +windows/100 as a final tiebreak
+            # A session that merely has ONE pane cd-ed into d (e.g. a shell
+            # in "Repos" sitting in Repos/dev-setup) must not outrank the
+            # session that is entirely about d just because it has more windows.
+            best=""; bs=-1
+            for (s in m)   { sc=(s in own?1000:0)+int(100*m[s]/tot[s])+wins[s]/100; if (sc>bs){bs=sc;best=s} }
+            for (s in own) if (!(s in m)) { sc=1000+wins[s]/100; if (sc>bs){bs=sc;best=s} }
+            if (best!="") print best }
     ' "$SNAP"
 }
 

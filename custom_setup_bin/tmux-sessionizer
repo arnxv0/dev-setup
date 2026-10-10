@@ -50,11 +50,20 @@ snapshot_session_for_path() {
     [ -f "$snap" ] || return 1
     local dir="${1%/}"
     awk -F'\t' -v d="$dir" '
-        $1=="session" { wins[$2]=$3; if ($5==d) hit[$2]=1 }
-        $1=="pane"    { if ($6==d) hit[$2]=1 }
-        END { best=""; bw=-1
-              for (s in hit) if (wins[s]+0 > bw) { bw=wins[s]+0; best=s }
-              if (best!="") print best }
+        $1=="session" { wins[$2]=$3; if ($5==d) own[$2]=1 }
+        $1=="pane"    { tot[$2]++; if ($6==d) m[$2]++ }
+        END {
+            # Score, highest wins:
+            #   +1000 the session itself lives in d (its start path)
+            #   +0..100 share of the session'"'"'s panes that sit in d
+            #   +windows/100 as a final tiebreak
+            # A session that merely has ONE pane cd-ed into d (e.g. a shell
+            # in "Repos" sitting in Repos/dev-setup) must not outrank the
+            # session that is entirely about d just because it has more windows.
+            best=""; bs=-1
+            for (s in m)   { sc=(s in own?1000:0)+int(100*m[s]/tot[s])+wins[s]/100; if (sc>bs){bs=sc;best=s} }
+            for (s in own) if (!(s in m)) { sc=1000+wins[s]/100; if (sc>bs){bs=sc;best=s} }
+            if (best!="") print best }
     ' "$snap"
 }
 
