@@ -248,6 +248,44 @@ if [ -z "$ONLY" ] || case "~/.zshrc hook" in *"$ONLY"*) true ;; *) false ;; esac
     ensure_zshrc_hook
 fi
 
+# ── global gitignore for Session.vim ────────────────────────────────────────
+# vim-obsession writes Session.vim into each project dir so nvim can reopen its
+# buffers. Without a global ignore that shows up as an untracked file in every
+# repo you work in.
+#
+# Write to the file git ACTUALLY reads. core.excludesFile may be set by a
+# system-level gitconfig (on this machine /usr/local/git/etc/gitconfig points it
+# at ~/.gitignore), in which case ~/.config/git/ignore is never consulted.
+ensure_git_ignore() {
+    local label='global gitignore (Session.vim)'
+    if [ -n "$ONLY" ]; then
+        case "$label" in *"$ONLY"*) ;; *) return ;; esac
+    fi
+    local target
+    target=$(git config --get core.excludesFile 2>/dev/null)
+    if [ -n "$target" ]; then
+        target="${target/#\~/$HOME}"
+    else
+        target="${XDG_CONFIG_HOME:-$HOME/.config}/git/ignore"
+    fi
+
+    if [ -f "$target" ] && grep -qxF 'Session.vim' "$target"; then
+        printf '  %-10s %s\n' 'OK' "$label"
+        n_ok=$((n_ok+1)); return
+    fi
+    if [ "$CHECK" -eq 1 ]; then
+        printf '  %-10s %s -> %s\n' 'NEW' "$label" "${target/#$HOME/~}"
+        n_new=$((n_new+1)); return
+    fi
+    mkdir -p "$(dirname "$target")"
+    printf '\n# vim-obsession session files (dev-setup)\nSession.vim\n' >> "$target"
+    printf '  %-10s %s -> %s\n' 'INSTALLED' "$label" "${target/#$HOME/~}"
+    n_new=$((n_new+1))
+}
+
+echo "dev-setup: git"
+ensure_git_ignore
+
 # ── runtime scripts on PATH ──────────────────────────────────────────────────
 if [ -d "$BIN_SRC" ]; then
     echo "dev-setup: bin"
