@@ -38,6 +38,8 @@ if ! tmux list-sessions &> /dev/null; then
 fi
 
 TAB=$'\t'
+STAGE=$(mktemp "${TMPDIR:-/tmp}/tmux-snapshot.XXXXXX")
+trap 'rm -f "$STAGE"' EXIT
 
 {
     echo "# tmux state snapshot"
@@ -54,14 +56,14 @@ TAB=$'\t'
     tmux list-windows -a -F "window${TAB}#{session_name}${TAB}#{window_index}${TAB}#{window_name}${TAB}#{window_active}${TAB}#{window_layout}"
 
     tmux list-panes -a -F "pane${TAB}#{session_name}${TAB}#{window_index}.#{pane_index}${TAB}#{pane_active}${TAB}#{pane_current_command}${TAB}#{pane_current_path}${TAB}#{pane_pid}"
-} > "$OUT"
+} > "$STAGE"
 
 # ── claude pane -> session id ────────────────────────────────────────────────
 # Correlate each claude process's start time against the first `timestamp` in
 # each candidate transcript. A directory holding exactly one transcript is
 # unambiguous regardless of the delta (the process may have been resumed long
 # after the conversation began).
-python3 - "$OUT" <<'PY_EOF' 2>/dev/null || echo "# claude mapping skipped (python3 unavailable)" >> "$OUT"
+python3 - "$STAGE" <<'PY_EOF' 2>/dev/null || echo "# claude mapping skipped (python3 unavailable)" >> "$OUT"
 import datetime, glob, json, os, re, subprocess, sys
 
 out = sys.argv[1]
@@ -146,9 +148,16 @@ for cmd, sess, win, cwd, pid in panes:
         # descendant of the pane shell), and requiring confirmation here would
         # drop a pane we already know about. Trust tmux; fall back to timing.
         cpid, cline = pid, ''
+    elif VERSIONISH.match(cmd):
+        # Version-shaped command but the process walk found nothing. That walk
+        # legitimately comes up empty (observed on a live claude pane whose
+        # shell reported no descendants), so do not drop the pane -- fall back
+        # to timing. The transcript-directory check below is the safeguard: if
+        # this cwd has no ~/.claude/projects entry it resolves to UNRESOLVED
+        # rather than inventing a mapping for an unrelated program.
+        cpid, cline = pid, ''
     else:
-        # version-shaped or node: only a process match justifies treating it as
-        # claude, otherwise we would mislabel unrelated programs.
+        # bare 'node' with no claude process underneath: not ours.
         continue
 
     # Best case: the process was started with --resume, so the id is right there.
@@ -182,6 +191,10 @@ for cmd, sess, win, cwd, pid in panes:
             note = 'correlated' if d < 3600 else 'LOW-CONFIDENCE'
         else:
             note = f'UNRESOLVED-{len(cands)}-candidates'
+    if not best and note.startswith('UNRESOLVED-no-transcript-dir') and cmd != 'claude':
+        # version-shaped, unconfirmed, and no transcript for this folder:
+        # almost certainly not Claude Code. Leave it out.
+        continue
     rows.append(('claude', f'{sess}:{win}', cwd, cpid, best, delta, note,
                  str(len(cands))))
 
@@ -190,6 +203,87 @@ with open(out, 'a') as fh:
     for r in rows:
         fh.write('\t'.join(r) + '\n')
 PY_EOF
+
+
+# ── merge with the previous snapshot ─────────────────────────────────────────
+# A snapshot must NOT be a plain overwrite. After a reboot only a session or
+# two is open, so a wholesale replace would throw away the saved state of every
+# project that is not currently running -- exactly the state you want to
+# restore from. Sessions that are live are refreshed; sessions only present in
+# the previous snapshot are carried forward with their last-seen date, and are
+# dropped once they have not been seen for $KEEP_DAYS days.
+python3 - "$STAGE" "$OUT" "$KEEP_DAYS" <<'MERGE' || cp "$STAGE" "$OUT"
+import datetime, os, sys
+
+stage, out, keep_days = sys.argv[1], sys.argv[2], float(sys.argv[3])
+now = datetime.datetime.now(datetime.timezone.utc)
+today = now.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+def load(path):
+    """-> (header_lines, {session: [lines]}, {session: last_seen})"""
+    hdr, by, seen = [], {}, {}
+    if not os.path.exists(path):
+        return hdr, by, seen
+    for line in open(path):
+        line = line.rstrip('\n')
+        if not line:
+            continue
+        if line.startswith('#'):
+            hdr.append(line)
+            continue
+        f = line.split('\t')
+        kind = f[0]
+        if kind == 'seen' and len(f) >= 3:
+            seen[f[1]] = f[2]
+            continue
+        if kind == 'claude' and len(f) >= 2:
+            key = f[1].rsplit(':', 1)[0]      # pane is "<session>:<window>"
+        elif len(f) >= 2:
+            key = f[1]
+        else:
+            continue
+        by.setdefault(key, []).append(line)
+    return hdr, by, seen
+
+new_hdr, new_by, _        = load(stage)
+_,       old_by, old_seen = load(out)
+
+live = set(new_by)
+merged, seen_out, carried, dropped = {}, {}, 0, 0
+
+for sess, lines in new_by.items():
+    merged[sess] = lines
+    seen_out[sess] = today
+
+for sess, lines in old_by.items():
+    if sess in live:
+        continue
+    last = old_seen.get(sess, today)
+    try:
+        age_days = (now - datetime.datetime.fromisoformat(
+            last.replace('Z', '+00:00'))).total_seconds() / 86400.0
+    except Exception:
+        age_days = 0.0
+    if age_days > keep_days:
+        dropped += 1
+        continue
+    merged[sess] = lines
+    seen_out[sess] = last
+    carried += 1
+
+with open(out, 'w') as fh:
+    for h in new_hdr:
+        fh.write(h + '\n')
+    fh.write('# Sessions not currently running are carried over from the previous\n')
+    fh.write('# snapshot; the "seen" lines record when each was last seen live.\n#\n')
+    for sess in sorted(merged):
+        for line in merged[sess]:
+            fh.write(line + '\n')
+    for sess in sorted(seen_out):
+        fh.write(f'seen\t{sess}\t{seen_out[sess]}\n')
+
+print(f'  live={len(live)} carried={carried} dropped={dropped}', file=sys.stderr)
+MERGE
 
 # ── history ──────────────────────────────────────────────────────────────────
 # Keep a dated copy so a folder's pane state can be rolled back weeks later.
