@@ -32,6 +32,15 @@ tmux-restore --dry-run <session>   # show without doing
 tmux-restore <session>             # rebuild one project
 ```
 
+A pane whose command is only **typed and not run** keeps it. Restore a project,
+press Enter in the one pane you need, and the rest still come back next time
+with their command waiting — including commands the snapshot could never
+reconstruct, like a leftover `npm run dev`. Two mechanisms:
+
+- the exact prompt line is recorded per pane (`pending`), and re-typed verbatim
+- a Claude pane's session id is carried forward even while it sits idle, so the
+  conversation stays findable (`carried-pane` in the snapshot)
+
 Live sessions are never clobbered — `tmux-restore` skips anything already
 running. Snapshots live in `~/.local/share/tmux-state/`, outside the repo,
 since they contain absolute paths and session ids.

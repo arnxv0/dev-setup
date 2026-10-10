@@ -62,6 +62,10 @@ snap_panes()     { awk -F'\t' -v s="$1" -v w="$2" '
                      $1=="pane" && $2==s { split($3,a,"."); if (a[1]==w) print a[2]"\t"$5"\t"$6 }
                    ' "$SNAP" | sort -k1,1n; }
 snap_claude_id() { awk -F'\t' -v k="$1" '$1=="claude" && $2==k {print $5; exit}' "$SNAP"; }
+# The literal line left unexecuted on the pane's prompt, if one was recorded.
+snap_pending()   { awk -F'\t' -v s="$1" -v w="$2" '
+                     $1=="pending" && $2==s { split($3,a,"."); if (a[1]==w) { print $4; exit } }
+                   ' "$SNAP"; }
 
 # Find the saved session for a FOLDER, not a name.
 #
@@ -249,8 +253,19 @@ for sess in "${TARGETS[@]}"; do
         # is whatever your interactive shell has, nothing spawns itself, and you
         # press Enter only in the panes you actually want back.
         typed=""
+        # A recorded pending line wins: it is literally what was on the prompt,
+        # including commands we could never reconstruct (npm run dev, a one-off
+        # you were about to run). Then the claude id, then nvim.
+        pend=$(snap_pending "$sess" "$widx")
         sid=$(snap_claude_id "$sess:$widx")
-        if [ -n "$sid" ]; then
+        if [ -n "$pend" ]; then
+            typed="$pend"
+            if [ "${#pend}" -gt 52 ]; then
+                echo "   typed: ${pend:0:52}...  <- $sess:$widx"
+            else
+                echo "   typed: $pend  <- $sess:$widx"
+            fi
+        elif [ -n "$sid" ]; then
             typed="claude --resume $sid"
             echo "   typed: claude --resume ${sid%%-*}  <- $sess:$widx"
         else

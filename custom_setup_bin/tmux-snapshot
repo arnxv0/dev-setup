@@ -24,6 +24,11 @@ HISTDIR="$SNAPDIR/history"
 # every 15 min (~96/day), so keeping them all for months would be ~170MB of
 # near-identical files; thinning to daily keeps ~90 days in a few MB.
 KEEP_ALL_HOURS="${TMUX_SNAPSHOT_KEEP_ALL_HOURS:-24}"
+# The prompt's trailing marker, used to find where typed input begins on the
+# cursor row. Comes from `%% ` in dots/.zprofile. If the prompt changes, change
+# this -- extraction fails CLOSED (records nothing) rather than guessing.
+PROMPT_TERMINATOR="${TMUX_PROMPT_TERMINATOR:-% }"
+PENDING_MAX_LEN="${TMUX_PENDING_MAX_LEN:-500}"
 KEEP_DAYS="${TMUX_SNAPSHOT_KEEP_DAYS:-120}"
 mkdir -p "$(dirname "$OUT")" "$HISTDIR"
 
@@ -62,6 +67,40 @@ trap 'rm -f "$STAGE"' EXIT
 
     "${TM[@]}" list-panes -a -F "pane${TAB}#{session_name}${TAB}#{window_index}.#{pane_index}${TAB}#{pane_active}${TAB}#{pane_current_command}${TAB}#{pane_current_path}${TAB}#{pane_pid}"
 } > "$STAGE"
+
+# ── pending input (typed but not executed) ──────────────────────────────────
+# A pane you restored and never pressed Enter in still holds its command on the
+# prompt. Record it so a later restore types it back.
+#
+# Extraction uses the cursor, not the last visible line: capture-pane TRIMS
+# trailing whitespace, so the prompt's trailing space is gone and there is
+# nothing to split on. Truncating the cursor row to #{cursor_x} first restores
+# that boundary, after which everything past the last terminator is the input.
+# An idle prompt yields the empty string, which is exactly what we want.
+{
+    while IFS=$'\t' read -r psess pidx pcmd pcy pcx; do
+        [ -n "$psess" ] || continue
+        case "$pcmd" in
+            zsh|bash|sh|fish) ;;
+            *) continue ;;              # a program is running; no prompt to read
+        esac
+        [ "$pcx" -gt 0 ] 2>/dev/null || continue
+        row=$("${TM[@]}" capture-pane -p -t "=$psess:${pidx%%.*}" -S "$pcy" -E "$pcy" 2>/dev/null | head -1)
+        padded=$(printf '%-*s' "$pcx" "$row")
+        slice=${padded:0:$pcx}
+        # fail closed: no terminator on the row means we cannot tell prompt from
+        # input, so record nothing rather than the whole line
+        case "$slice" in
+            *"$PROMPT_TERMINATOR"*) ;;
+            *) continue ;;
+        esac
+        text=${slice##*"$PROMPT_TERMINATOR"}
+        [ -n "$text" ] || continue
+        text=${text%"${text##*[![:space:]]}"}          # strip trailing spaces
+        [ "${#text}" -le "$PENDING_MAX_LEN" ] || continue
+        printf 'pending\t%s\t%s\t%s\n' "$psess" "$pidx" "$text"
+    done < <("${TM[@]}" list-panes -a -F "#{session_name}${TAB}#{window_index}.#{pane_index}${TAB}#{pane_current_command}${TAB}#{cursor_y}${TAB}#{cursor_x}")
+} >> "$STAGE"
 
 # ── claude pane -> session id ────────────────────────────────────────────────
 # Correlate each claude process's start time against the first `timestamp` in
@@ -260,7 +299,53 @@ _,       old_by, old_seen = load(out)
 live = set(new_by)
 merged, seen_out, carried, dropped = {}, {}, 0, 0
 
+BARE_SHELLS = {'zsh', 'bash', 'sh', 'fish', ''}
+
+def claude_keys(lines):
+    """{'<session>:<window>': line} for the claude entries in a session block."""
+    out = {}
+    for line in lines:
+        f = line.split('\t')
+        if f[0] == 'claude' and len(f) >= 2:
+            out[f[1]] = line
+    return out
+
+def idle_panes(lines):
+    """{'<session>:<window>': cwd} for panes sitting at a bare shell."""
+    out = {}
+    for line in lines:
+        f = line.split('\t')
+        if f[0] == 'pane' and len(f) >= 6 and f[4] in BARE_SHELLS:
+            out[f[1] + ':' + f[2].split('.')[0]] = f[5]
+    return out
+
+carried_panes = 0
+
 for sess, lines in new_by.items():
+    # A live session is refreshed wholesale -- but that drops the claude entry
+    # for any pane whose command is only TYPED and not running. Such a pane
+    # reports pane_current_command=zsh, so detection cannot see it, and the
+    # session-id mapping would be lost with nothing to recover it from.
+    #
+    # Re-attach the previous entry when the pane is still an idle shell in the
+    # same directory. Deterministic: no screen parsing involved.
+    old_cl = claude_keys(old_by.get(sess, []))
+    if old_cl:
+        new_cl = claude_keys(lines)
+        idle = idle_panes(lines)
+        for key, old_line in old_cl.items():
+            if key in new_cl:
+                continue                      # detected live, nothing to do
+            if key not in idle:
+                continue                      # pane gone, or running something
+            f = old_line.split('\t')
+            if len(f) >= 3 and f[2] != idle[key]:
+                continue                      # pane moved to another directory
+            if len(f) >= 7 and 'carried-pane' not in f[6]:
+                f[6] = f[6] + '+carried-pane'
+            lines = lines + ['\t'.join(f)]
+            carried_panes += 1
+
     merged[sess] = lines
     seen_out[sess] = today
 
@@ -291,7 +376,7 @@ with open(out, 'w') as fh:
     for sess in sorted(seen_out):
         fh.write(f'seen\t{sess}\t{seen_out[sess]}\n')
 
-print(f'  live={len(live)} carried={carried} dropped={dropped}', file=sys.stderr)
+print(f'  live={len(live)} carried={carried} dropped={dropped} carried-panes={carried_panes}', file=sys.stderr)
 MERGE
 
 # ── history ──────────────────────────────────────────────────────────────────
