@@ -42,8 +42,13 @@ hydrate() {
         tmux send-keys -t $1 "source $HOME/.tmux-sessionizer" c-M
     fi
 
-    # Start nvim in the primary window of the session
-    tmux send-keys -t $1 "nvim ." C-m
+    # Start nvim in the primary window of the session, reopening the previous
+    # buffers if vim-obsession left a Session.vim behind.
+    if [ -f "$2/Session.vim" ]; then
+        tmux send-keys -t $1 "nvim -S Session.vim" C-m
+    else
+        tmux send-keys -t $1 "nvim ." C-m
+    fi
 
     # Open a new tmux window (without running any commands in it)
     tmux new-window -t $1 -c $2

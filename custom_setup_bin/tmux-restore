@@ -21,6 +21,7 @@ parent_path=$( cd "$(dirname "${BASH_SOURCE[0]}")" ; pwd -P )
 SNAP="${SNAP:-${TMUX_SNAPSHOT_DIR:-$HOME/.local/share/tmux-state}/snapshot}"
 DRY=0
 ALL=0
+ATTACH=0
 PLACEHOLDER=9999   # scratch window index, killed once real windows exist
 
 TM=(tmux)
@@ -36,6 +37,9 @@ options:
   --list        show sessions in the snapshot and whether each is already live
   --all         restore every session in the snapshot (asks for confirmation)
   --dry-run     print what would happen; change nothing
+  -a, --attach  after restoring, attach to it (or switch, if already in tmux).
+                Works with no tmux server running -- one command from a bare
+                terminal is enough; you do not need to start tmux first.
   -h, --help    this message
 
 env:
@@ -59,6 +63,7 @@ TARGETS=()
 while [ $# -gt 0 ]; do
     case "$1" in
         --dry-run) DRY=1 ;;
+        -a|--attach) ATTACH=1 ;;
         --all)     ALL=1 ;;
         --list)
             [ -f "$SNAP" ] || { echo "no snapshot at $SNAP" >&2; exit 1; }
@@ -90,6 +95,7 @@ fi
 run() {
     if [ "$DRY" -eq 1 ]; then printf '  + %s\n' "$*"; else "$@"; fi
 }
+
 
 restored=0; skipped=0; missing=0; incomplete=0
 
@@ -146,9 +152,47 @@ for sess in "${TARGETS[@]}"; do
 
         p1cwd=$(printf '%s' "${panes[0]}" | cut -f3)
         [ -d "$p1cwd" ] || p1cwd="$HOME"
+        p1cmd=$(printf '%s' "${panes[0]}" | cut -f2)
+
+        # Commands are TYPED into the pane, never executed.
+        #
+        # This is the whole mechanism, and it is deliberately dumb. Auto-running
+        # needed a `$SHELL -l -i -c ...` wrapper just to get PATH right (claude
+        # lives in ~/.local/bin, added only by .zshrc) and still raced the
+        # pane's shell -- send-keys delivers text reliably, but its trailing C-m
+        # is swallowed by a shell that is not reading yet.
+        #
+        # Typing the line sidesteps all of it: you see the exact command, PATH
+        # is whatever your interactive shell has, nothing spawns itself, and you
+        # press Enter only in the panes you actually want back.
+        typed=""
+        sid=$(snap_claude_id "$sess:$widx")
+        if [ -n "$sid" ]; then
+            typed="claude --resume $sid"
+            echo "   typed: claude --resume ${sid%%-*}  <- $sess:$widx"
+        else
+            case "$p1cmd" in
+                nvim|vim)
+                    if [ -f "$p1cwd/Session.vim" ]; then
+                        typed="$p1cmd -S Session.vim"
+                    else
+                        typed="$p1cmd ."
+                    fi
+                    echo "   typed: $typed  <- $sess:$widx" ;;
+                zsh|bash|sh|"") : ;;
+                *) echo "   note: $sess:$widx ran '$p1cmd' -- left as a plain shell" ;;
+            esac
+        fi
 
         run "${TM[@]}" new-window -d -t "=$sess:$widx" -n "$wname" -c "$p1cwd"
 
+        # no C-m on purpose: the line waits on the prompt for you to run
+        if [ -n "$typed" ]; then
+            run "${TM[@]}" send-keys -t "=$sess:$widx" "$typed"
+        fi
+
+
+        # extra panes (rare: this layout is one pane per window)
         i=1
         while [ "$i" -lt "${#panes[@]}" ]; do
             pcwd=$(printf '%s' "${panes[$i]}" | cut -f3)
@@ -159,27 +203,6 @@ for sess in "${TARGETS[@]}"; do
         if [ "${#panes[@]}" -gt 1 ] && [ -n "$wlayout" ]; then
             run "${TM[@]}" select-layout -t "=$sess:$widx" "$wlayout"
         fi
-
-        for pline in "${panes[@]}"; do
-            pidx=$(printf '%s' "$pline" | cut -f1)
-            pcmd=$(printf '%s' "$pline" | cut -f2)
-            target="=$sess:$widx.$pidx"
-            case "$pcmd" in
-                claude)
-                    sid=$(snap_claude_id "$sess:$widx")
-                    if [ -n "$sid" ]; then
-                        run "${TM[@]}" send-keys -t "$target" "claude --resume $sid" C-m
-                        echo "   claude --resume ${sid%%-*}  <- $sess:$widx"
-                    else
-                        run "${TM[@]}" send-keys -t "$target" "claude --continue" C-m
-                        echo "   claude --continue (no id recorded)  <- $sess:$widx"
-                    fi ;;
-                nvim|vim)
-                    run "${TM[@]}" send-keys -t "$target" "$pcmd ." C-m ;;
-                zsh|bash|sh|"") : ;;
-                *)  echo "   note: $sess:$widx ran '$pcmd' -- left as a plain shell" ;;
-            esac
-        done
     done
 
     # drop the scratch window now that the real ones exist
@@ -200,6 +223,22 @@ for sess in "${TARGETS[@]}"; do
         restored=$((restored+1))
     fi
 done
+
+# --attach: switch if we are already inside tmux, otherwise attach outright.
+# Either works even when this invocation is what started the server.
+if [ "$ATTACH" -eq 1 ] && [ "$DRY" -eq 0 ] && [ "${#TARGETS[@]}" -ge 1 ]; then
+    first="${TARGETS[0]}"
+    if "${TM[@]}" has-session -t "=$first" 2>/dev/null; then
+        if [ -n "${TMUX:-}" ]; then
+            "${TM[@]}" switch-client -t "=$first" 2>/dev/null \
+                || echo "could not switch to $first"
+        else
+            exec "${TM[@]}" attach-session -t "=$first"
+        fi
+    else
+        echo "cannot attach: $first was not restored"
+    fi
+fi
 
 echo
 echo "restored=$restored  skipped(live)=$skipped  not-in-snapshot=$missing  incomplete=$incomplete"

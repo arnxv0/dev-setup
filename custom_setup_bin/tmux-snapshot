@@ -60,35 +60,55 @@ import datetime, glob, json, os, re, subprocess, sys
 
 out = sys.argv[1]
 
-def tmux(fmt):
-    r = subprocess.run(['tmux', 'list-panes', '-a', '-F', fmt],
-                       capture_output=True, text=True)
-    return [l for l in r.stdout.strip().split('\n') if l]
+panes = [l.split('\t') for l in subprocess.run(
+    ['tmux', 'list-panes', '-a', '-F',
+     '#{pane_current_command}\t#{session_name}\t#{window_index}\t'
+     '#{pane_current_path}\t#{pane_pid}'],
+    capture_output=True, text=True).stdout.strip().split('\n') if l]
 
-panes = [l.split('\t') for l in tmux('#{pane_current_command}\t#{session_name}\t'
-                                     '#{window_index}\t#{pane_current_path}\t#{pane_pid}')]
+# Claude Code does NOT always report as "claude": it frequently shows up in
+# pane_current_command as its own version string (2.1.285, 2.1.293, ...).
+# Matching only on "claude" missed 13 of 23 panes on this machine -- more than
+# it caught -- and those would have restored as bare shells with the
+# conversation unreachable. Treat anything version-shaped, or node, as a
+# candidate and confirm by reading the process command line.
+VERSIONISH = re.compile(r'^\d+\.\d+\.\d+')
+RESUME_ID  = re.compile(r'--resume[= ]+([0-9a-f-]{36})')
+
+def descendants(pid, depth=0):
+    if depth > 3:
+        return []
+    kids = subprocess.run(['pgrep', '-P', str(pid)],
+                          capture_output=True, text=True).stdout.split()
+    out = []
+    for k in kids:
+        out.append(k)
+        out.extend(descendants(k, depth + 1))
+    return out
+
+def cmdline(pid):
+    return subprocess.run(['ps', '-o', 'command=', '-p', str(pid)],
+                          capture_output=True, text=True).stdout.strip()
+
+def claude_proc(shell_pid):
+    """Return (pid, cmdline) of a claude process under this pane, or None."""
+    for k in descendants(shell_pid):
+        c = cmdline(k)
+        if 'claude' in c.lower():
+            return k, c
+    return None
 
 def slug(path):
-    # Verified against every real dir in ~/.claude/projects:
-    # '/', '_' and '.' all collapse to '-'; case is PRESERVED; the leading
-    # '/' becomes the leading '-' for free.
+    # '/', '_' and '.' all collapse to '-'; case is PRESERVED; the leading '/'
+    # becomes the leading '-'. Verified against every real project dir.
     return re.sub(r'[/_.]', '-', path)
 
-def claude_pid(shell_pid):
-    kids = subprocess.run(['pgrep', '-P', shell_pid],
-                          capture_output=True, text=True).stdout.split()
-    for k in kids:
-        comm = subprocess.run(['ps', '-o', 'comm=', '-p', k],
-                              capture_output=True, text=True).stdout.strip()
-        if 'claude' in comm.lower() or 'node' in comm.lower():
-            return k
-    return kids[0] if kids else shell_pid
-
 def started(pid):
-    s = subprocess.run(['ps', '-o', 'lstart=', '-p', pid],
+    s = cmdline  # placeholder to keep names distinct
+    r = subprocess.run(['ps', '-o', 'lstart=', '-p', str(pid)],
                        capture_output=True, text=True).stdout.strip()
     try:
-        return (datetime.datetime.strptime(s, '%a %b %d %H:%M:%S %Y')
+        return (datetime.datetime.strptime(r, '%a %b %d %H:%M:%S %Y')
                 .astimezone(datetime.timezone.utc))
     except Exception:
         return None
@@ -109,29 +129,50 @@ def first_ts(path):
 
 rows = []
 for cmd, sess, win, cwd, pid in panes:
-    if cmd != 'claude':
+    if not (cmd == 'claude' or VERSIONISH.match(cmd) or cmd == 'node'):
         continue
-    cpid = claude_pid(pid)
-    start = started(cpid)
+    found = claude_proc(pid)
+    if found:
+        cpid, cline = found
+    elif cmd == 'claude':
+        # tmux already says this pane is claude. The process walk can come up
+        # empty (observed: pane_current_command=claude with no visible
+        # descendant of the pane shell), and requiring confirmation here would
+        # drop a pane we already know about. Trust tmux; fall back to timing.
+        cpid, cline = pid, ''
+    else:
+        # version-shaped or node: only a process match justifies treating it as
+        # claude, otherwise we would mislabel unrelated programs.
+        continue
+
+    # Best case: the process was started with --resume, so the id is right there.
+    m = RESUME_ID.search(cline)
+    if m:
+        rows.append(('claude', f'{sess}:{win}', cwd, cpid, m.group(1), '',
+                     'from-cmdline', '1'))
+        continue
+
+    # Otherwise correlate process start time against each transcript's first
+    # timestamp. A directory holding exactly one transcript is unambiguous
+    # regardless of delta.
     cands = sorted(glob.glob(os.path.expanduser('~/.claude/projects/')
                              + slug(cwd) + '/*.jsonl'))
     best, delta, note = '', '', ''
     if not cands:
         note = 'UNRESOLVED-no-transcript-dir'
     elif len(cands) == 1:
-        best = os.path.basename(cands[0])[:-6]
-        note = 'only-candidate'
+        best, note = os.path.basename(cands[0])[:-6], 'only-candidate'
     else:
+        st = started(cpid)
         scored = []
         for c in cands:
             ft = first_ts(c)
-            if ft and start:
-                scored.append((abs((ft - start).total_seconds()), c))
+            if ft and st:
+                scored.append((abs((ft - st).total_seconds()), c))
         if scored:
             scored.sort()
             d, c = scored[0]
-            best = os.path.basename(c)[:-6]
-            delta = f'{int(d)}s'
+            best, delta = os.path.basename(c)[:-6], f'{int(d)}s'
             note = 'correlated' if d < 3600 else 'LOW-CONFIDENCE'
         else:
             note = f'UNRESOLVED-{len(cands)}-candidates'
