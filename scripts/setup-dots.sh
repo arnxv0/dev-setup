@@ -121,8 +121,37 @@ backup_of() {
 install_item() {
     local src="$1" dest="$2"
     mkdir -p "$(dirname "$dest")"
-    [ -e "$dest" ] && rm -rf "$dest"
-    cp -R "$src" "$dest"
+
+    # Replacing a directory must not discard generated files that live inside
+    # it but are not part of the config -- lazy-lock.json (plugin version
+    # pins), helptags, and the rest of $EXCLUDES. A plain `rm -rf` wiped
+    # lazy-lock.json on every single nvim sync.
+    if [ -d "$src" ] && [ -d "$dest" ]; then
+        local stash rel e f
+        stash=$(mktemp -d)
+        for e in "${EXCLUDES[@]}"; do
+            while IFS= read -r f; do
+                [ -n "$f" ] || continue
+                rel="${f#$dest/}"
+                mkdir -p "$stash/$(dirname "$rel")"
+                cp "$f" "$stash/$rel" 2>/dev/null
+            done < <(find "$dest" -name "$e" -type f 2>/dev/null)
+        done
+
+        rm -rf "$dest"
+        cp -R "$src" "$dest"
+
+        while IFS= read -r rel; do
+            [ -n "$rel" ] || continue
+            rel="${rel#./}"
+            mkdir -p "$dest/$(dirname "$rel")"
+            cp "$stash/$rel" "$dest/$rel" 2>/dev/null
+        done < <(cd "$stash" 2>/dev/null && find . -type f 2>/dev/null)
+        rm -rf "$stash"
+    else
+        [ -e "$dest" ] && rm -rf "$dest"
+        cp -R "$src" "$dest"
+    fi
 }
 
 n_new=0; n_ok=0; n_updated=0; n_drift=0; n_blocked=0; n_untracked=0; n_skipped=0
