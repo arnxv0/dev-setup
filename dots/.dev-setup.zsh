@@ -18,30 +18,46 @@
 HISTSIZE=50000
 SAVEHIST=50000
 
-if [[ -n "$TMUX" ]]; then
-    # Resolve tmux by absolute path -- $PATH may not carry Homebrew yet.
-    _tmuxbin="${commands[tmux]:-}"
-    if [[ -z "$_tmuxbin" ]]; then
-        for _c in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do
-            [[ -x "$_c" ]] && _tmuxbin="$_c" && break
+# Resolving the key needs a `tmux display` call, and that MUST NOT happen while
+# the shell is starting up. tmux's server is single-threaded: a shell it is
+# spawning that asks the server a question can block until the server finishes
+# creating that very pane -- which it cannot, because it is waiting on the
+# shell. The result is a new pane (prefix+c) that hangs until Ctrl-C.
+#
+# So default to the global file, then resolve the real one on the FIRST prompt,
+# by which point new-window has returned and the server is free.
+HISTFILE="$HOME/.zsh_history"
+
+autoload -Uz add-zsh-hook
+
+_devsetup_resolve_histfile() {
+    # one-shot: unhook immediately so this never costs anything again
+    add-zsh-hook -d precmd _devsetup_resolve_histfile
+    [[ -n "$TMUX" ]] || return 0
+
+    local tmuxbin="${commands[tmux]:-}"
+    if [[ -z "$tmuxbin" ]]; then
+        local c
+        for c in /opt/homebrew/bin/tmux /usr/local/bin/tmux /usr/bin/tmux; do
+            [[ -x "$c" ]] && tmuxbin="$c" && break
         done
-        unset _c
     fi
-    # MUST pin to $TMUX_PANE: a bare `display -p` resolves against the session's
-    # *current* window, so every pane in a restored session would report the
-    # same index and silently share one history file.
-    _hkey=""
-    [[ -n "$_tmuxbin" ]] && _hkey=$("$_tmuxbin" display -t "$TMUX_PANE" -p '#S-#I' 2>/dev/null)
-    if [[ -n "$_hkey" ]]; then
-        mkdir -p "$HOME/.zsh_history.d"
-        HISTFILE="$HOME/.zsh_history.d/${_hkey//\//_}"
-    else
-        HISTFILE="$HOME/.zsh_history"
-    fi
-    unset _hkey _tmuxbin
-else
-    HISTFILE="$HOME/.zsh_history"
-fi
+    [[ -n "$tmuxbin" ]] || return 0
+
+    # MUST pin to $TMUX_PANE: a bare `display -p` resolves against the
+    # session's *current* window, so every pane in a restored session would
+    # report the same index and silently share one history file.
+    local key
+    key=$("$tmuxbin" display -t "$TMUX_PANE" -p '#S-#I' 2>/dev/null) || return 0
+    [[ -n "$key" ]] || return 0
+
+    mkdir -p "$HOME/.zsh_history.d" 2>/dev/null || return 0
+    HISTFILE="$HOME/.zsh_history.d/${key//\//_}"
+    # zsh already read the global file at startup; load this pane's own history
+    # now that we know which file it is.
+    fc -R "$HISTFILE" 2>/dev/null
+}
+add-zsh-hook precmd _devsetup_resolve_histfile
 
 setopt APPEND_HISTORY
 setopt INC_APPEND_HISTORY
@@ -56,7 +72,6 @@ setopt HIST_REDUCE_BLANKS
 # Every command also lands in one file so cross-project search still works
 # (^g). Guarded so a bare Enter does not re-append the previous command.
 HISTALL="$HOME/.zsh_history_all"
-autoload -Uz add-zsh-hook
 _hist_mirror() {
     local last
     last=$(fc -ln -1 2>/dev/null)
@@ -89,6 +104,9 @@ _fzf_history_all_widget() { _fzf_pick_into_buffer "$HISTALL" }    # everything
 
 zle -N _fzf_history_widget
 zle -N _fzf_history_all_widget
+# ^r = this pane. Alt-r = every pane.
+# NOT ^g: that is zsh's send-break (abort the current line) and stealing it
+# breaks a reflex people rely on. ^[r is undefined-key by default.
 bindkey '^r' _fzf_history_widget
-bindkey '^g' _fzf_history_all_widget
+bindkey '^[r' _fzf_history_all_widget
 bindkey -s '^f' "tmux-sessionizer\n"
