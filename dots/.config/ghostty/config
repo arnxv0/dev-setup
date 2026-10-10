@@ -3,7 +3,7 @@ font-size = 14
 font-thicken = true
 font-thicken-strength = 80
 
-theme = tokyonight_night
+theme = "TokyoNight Night"
 
 window-padding-x = 8
 window-padding-y = 8
