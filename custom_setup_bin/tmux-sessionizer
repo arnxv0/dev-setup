@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 switch_to() {
+    # "=" forces an exact name: without it `-t blit` can land on blit-web
     if [[ -z $TMUX ]]; then
-        tmux attach-session -t $1
+        tmux attach-session -t "=$1"
     else
-        tmux switch-client -t $1
+        tmux switch-client -t "=$1"
     fi
 }
 
@@ -71,7 +72,12 @@ RESTORE="$HOME/.local/custom_setup_bin/tmux-restore"
 start_session() {
     local name="$1" dir="$2"
     if snapshot_has "$name" && [ -x "$RESTORE" ]; then
-        if "$RESTORE" "$name" >/dev/null 2>&1; then
+        # Run from / so nothing in the restore can be swayed by where this
+        # shell happens to sit. Then verify the session really exists instead
+        # of trusting the exit code: a restore that quietly skipped left us
+        # calling switch-client on nothing ("can't find session: hirekat").
+        (cd / && "$RESTORE" "$name") >/dev/null 2>&1
+        if tmux has-session -t "=$name" 2>/dev/null; then
             tmux display-message "restored $name from snapshot" 2>/dev/null
             return 0
         fi
@@ -182,8 +188,8 @@ if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
     exit 0
 fi
 
-if ! has_session $selected_name; then
+if ! has_session "$selected_name"; then
     start_session "$selected_name" "$selected"
 fi
 
-switch_to $selected_name
+switch_to "$selected_name"

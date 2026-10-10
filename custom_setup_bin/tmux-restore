@@ -29,7 +29,7 @@ TM=(tmux)
 
 usage() {
     cat <<USAGE
-usage: tmux-restore [options] <session-name> [session-name ...]
+usage: tmux-restore [options] <session-name | /abs/folder> [...]
        tmux-restore --list
        tmux-restore --all
 
@@ -56,6 +56,7 @@ USAGE
 # field-exact lookups -- awk, not grep, so index 3 never matches 31
 snap_sessions()  { awk -F'\t' '$1=="session" {print $2}' "$SNAP"; }
 snap_has_sess()  { awk -F'\t' -v s="$1" '$1=="session" && $2==s {f=1} END{exit !f}' "$SNAP"; }
+snap_sess_path() { awk -F'\t' -v s="$1" '$1=="session" && $2==s {print $5; exit}' "$SNAP"; }
 snap_windows()   { awk -F'\t' -v s="$1" '$1=="window" && $2==s {print}' "$SNAP" | sort -t"$(printf '\t')" -k3,3n; }
 snap_panes()     { awk -F'\t' -v s="$1" -v w="$2" '
                      $1=="pane" && $2==s { split($3,a,"."); if (a[1]==w) print a[2]"\t"$5"\t"$6 }
@@ -142,10 +143,16 @@ run() {
 
 
 restored=0; skipped=0; missing=0; incomplete=0
+first_resolved=""
 
 for sess in "${TARGETS[@]}"; do
-    # a directory argument is resolved to whatever session was saved for it
-    if [ -d "$sess" ]; then
+    # An ABSOLUTE directory argument is resolved to whatever session was saved
+    # for it. Only absolute: a bare name like "hirekat" is a session name even
+    # when a folder called hirekat happens to exist in the caller's cwd
+    # (tmux-sessionizer passes names, and nearly every name is also a repo
+    # folder under ~/Desktop/Repos -- a relative -d test turned "restore
+    # hirekat" into "no saved session for folder hirekat" from that directory).
+    if [[ "$sess" = /* ]] && [ -d "$sess" ]; then
         resolved=$(snap_session_for_path "$sess")
         if [ -n "$resolved" ]; then
             echo "== $sess -> saved session '$resolved'"
@@ -155,6 +162,7 @@ for sess in "${TARGETS[@]}"; do
             missing=$((missing+1)); continue
         fi
     fi
+    [ -z "$first_resolved" ] && first_resolved="$sess"
     if ! snap_has_sess "$sess"; then
         echo "!! '$sess' is not in the snapshot -- skipping"
         missing=$((missing+1)); continue
@@ -174,10 +182,21 @@ for sess in "${TARGETS[@]}"; do
 
     echo "== restoring $sess (${#wins[@]} windows)"
 
+    # The session's start directory becomes the default for anything that does
+    # not pass -c (plain `tmux neww`, status bar #{session_path}, the next
+    # snapshot). Use the saved session path; if that was already ~ (older
+    # restores created everything in $HOME) fall back to the first pane's cwd.
+    sess_cwd=$(snap_sess_path "$sess")
+    if [ -z "$sess_cwd" ] || [ "$sess_cwd" = "$HOME" ] || [ ! -d "$sess_cwd" ]; then
+        fw=$(printf '%s' "${wins[0]}" | cut -f3)
+        sess_cwd=$(snap_panes "$sess" "$fw" | head -1 | cut -f3)
+    fi
+    [ -n "$sess_cwd" ] && [ -d "$sess_cwd" ] || sess_cwd="$HOME"
+
     # Create the session holding only a scratch window parked at a high index,
     # so every real window can be created at its exact recorded index without
     # ever colliding with the auto-created first window.
-    run "${TM[@]}" new-session -d -s "$sess" -c "$HOME"
+    run "${TM[@]}" new-session -d -s "$sess" -c "$sess_cwd"
     if [ "$DRY" -eq 0 ]; then
         # NOTE: 'display -p' returns empty with no attached client, which is
         # always the case for a freshly detached session. list-windows works.
@@ -287,8 +306,8 @@ done
 
 # --attach: switch if we are already inside tmux, otherwise attach outright.
 # Either works even when this invocation is what started the server.
-if [ "$ATTACH" -eq 1 ] && [ "$DRY" -eq 0 ] && [ "${#TARGETS[@]}" -ge 1 ]; then
-    first="${TARGETS[0]}"
+if [ "$ATTACH" -eq 1 ] && [ "$DRY" -eq 0 ] && [ -n "$first_resolved" ]; then
+    first="$first_resolved"
     if "${TM[@]}" has-session -t "=$first" 2>/dev/null; then
         if [ -n "${TMUX:-}" ]; then
             "${TM[@]}" switch-client -t "=$first" 2>/dev/null \
@@ -308,5 +327,8 @@ if [ "$DRY" -eq 1 ]; then
 else
     echo "attach with: ${TM[*]} attach -t <session>"
 fi
-if [ "$incomplete" -gt 0 ]; then exit 1; fi
+# Non-zero whenever something asked for is NOT live afterwards. Callers
+# (tmux-sessionizer) use this to fall back to a fresh session; a "skipped"
+# that was reported as success is exactly how "can't find session" happened.
+if [ "$incomplete" -gt 0 ] || [ "$missing" -gt 0 ]; then exit 1; fi
 exit 0

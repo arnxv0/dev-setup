@@ -20,6 +20,7 @@ Code conversation each pane was running are captured automatically and restored
 |---|---|
 | `prefix + f` | fzf a project. If it's in the snapshot the session is rebuilt (windows, cwds, `nvim`, `claude --resume <id>`); otherwise you get a fresh session. |
 | `prefix + o` | jump to the previous session, like nvim's `Ctrl-^` for files |
+| `prefix + c` / `"` / `%` | new window / split, opened in the current pane's folder |
 | `prefix + S` | snapshot now (otherwise automatic every 15 min) |
 | `prefix + Ctrl-s` | tmux-resurrect save |
 | `^r` / `^g` | fzf this pane's history / every pane's history |
