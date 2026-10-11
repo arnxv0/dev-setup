@@ -70,7 +70,7 @@ setopt HIST_REDUCE_BLANKS
 
 # ── global mirror ────────────────────────────────────────────────────────────
 # Every command also lands in one file so cross-project search still works
-# (^g). Guarded so a bare Enter does not re-append the previous command.
+# (Alt-r). Guarded so a bare Enter does not re-append the previous command.
 HISTALL="$HOME/.zsh_history_all"
 _hist_mirror() {
     local last
@@ -81,32 +81,92 @@ _hist_mirror() {
 }
 add-zsh-hook precmd _hist_mirror
 
-# ── fzf history pickers ──────────────────────────────────────────────────────
+# ── fzf history pickers ──────────────────────────────────────────────────
+# Two pickers: this window, and every shell that has ever run on this machine.
+#
+# "Every shell" has to mean more than $HISTALL. The mirror only starts at the
+# moment this hook is installed, and before that /etc/zshrc held SAVEHIST at
+# 1000 -- so the old global file is a 300-line stub, not years of history. The
+# all-shells picker therefore unions every file zsh has ever written here:
+#
+#   .zsh_history_all    our mirror: every command since the hook landed
+#   .zsh_history        the pre-hook global file, capped at 1000 by /etc/zshrc
+#   .zsh_history.d/*    the per-window files this hook creates
+#   .zsh_sessions/*     macOS's own per-session history, written by
+#                       /etc/zshrc_Apple_Terminal. macOS expires these, so
+#                       anything here is on borrowed time.
+#
+# Reading them at keypress rather than merging once means a new source (a new
+# window, a restored session) is picked up with no bookkeeping.
+
+# Normalise zsh history into "most recent timestamp<TAB>command", one line per
+# distinct command. Entries carry a `: <epoch>:<duration>;` prefix under
+# EXTENDED_HISTORY and nothing under the plain format, so both are handled.
+# LC_ALL=C throughout: these files contain invalid UTF-8 (truncated multi-byte
+# characters from killed commands) and GNU/BSD tools abort on it otherwise.
+_devsetup_hist_filter() {
+    LC_ALL=C awk '
+        {
+            ts = 0
+            line = $0
+            if (match(line, /^: [0-9]+:[0-9]+;/)) {
+                ts = substr(line, 3)
+                sub(/:.*/, "", ts)
+                line = substr(line, RLENGTH + 1)
+            }
+            if (line == "") next
+            if (!(line in best) || ts + 0 > best[line] + 0) best[line] = ts
+        }
+        END { for (l in best) printf "%s\t%s\n", best[l], l }
+    ' | LC_ALL=C sort -n -k1,1 | LC_ALL=C cut -f2-
+}
+
+# Takes history files as arguments; missing ones are skipped. With none left,
+# falls back to the shell's in-memory history so the key never does nothing.
 _fzf_pick_into_buffer() {
-    local src="$1" cmd
-    if [[ -f "$src" ]]; then
-        cmd=$(sed -E 's/^: [0-9]+:[0-9]+;//' "$src" \
-              | awk '!a[$0]++' \
+    local -a present
+    local f cmd
+    for f in "$@"; do
+        [[ -n "$f" && -f "$f" ]] && present+=("$f")
+    done
+
+    if (( ${#present} )); then
+        cmd=$(LC_ALL=C cat -- "${present[@]}" 2>/dev/null \
+              | _devsetup_hist_filter \
               | fzf --tac --reverse --preview="echo {}" --height=40% --border)
     else
-        cmd=$(history | sed 's/^[ ]*[0-9]*[ ]*//' \
-              | awk '!a[$0]++' \
+        cmd=$(history | LC_ALL=C sed 's/^[ ]*[0-9]*[ ]*//' \
+              | LC_ALL=C awk '!a[$0]++' \
               | fzf --tac --reverse --preview="echo {}" --height=40% --border)
     fi
+
     if [[ -n "$cmd" ]]; then
         BUFFER="$cmd"
         CURSOR=${#BUFFER}
         zle redisplay
     fi
 }
-_fzf_history_widget()     { _fzf_pick_into_buffer "$HISTFILE" }   # this pane
-_fzf_history_all_widget() { _fzf_pick_into_buffer "$HISTALL" }    # everything
+
+_fzf_history_widget() { _fzf_pick_into_buffer "$HISTFILE" }
+
+_fzf_history_all_widget() {
+    # (N) is nullglob: a missing directory expands to nothing instead of erroring.
+    _fzf_pick_into_buffer "$HISTALL" "$HOME/.zsh_history" \
+        "$HOME"/.zsh_history.d/*(N) "$HOME"/.zsh_sessions/*.history(N)
+}
 
 zle -N _fzf_history_widget
 zle -N _fzf_history_all_widget
-# ^r = this pane. Alt-r = every pane.
+# ^r = this window. Alt-r = every shell, ever.
+#
 # NOT ^g: that is zsh's send-break (abort the current line) and stealing it
 # breaks a reflex people rely on. ^[r is undefined-key by default.
+#
+# Alt-r needs the terminal to send Option as Esc. Ghostty does not by default
+# -- Option-r types ® -- so dots/.config/ghostty/config sets
+# `macos-option-as-alt = left`. ^x^r is bound to the same widget as a
+# terminal-independent fallback, for any terminal without that setting.
 bindkey '^r' _fzf_history_widget
 bindkey '^[r' _fzf_history_all_widget
+bindkey '^x^r' _fzf_history_all_widget
 bindkey -s '^f' "tmux-sessionizer\n"

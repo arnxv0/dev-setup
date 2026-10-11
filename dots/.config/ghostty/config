@@ -19,3 +19,8 @@ shell-integration-features = true
 
 confirm-close-surface = false
 scrollbar = never
+
+# Left Option sends Alt, so Alt-keyed shell widgets (Alt-r = search every
+# shell history) actually arrive. Right Option is left alone, so Option-based
+# Unicode input (®, ∆, accented characters) still works.
+macos-option-as-alt = left
