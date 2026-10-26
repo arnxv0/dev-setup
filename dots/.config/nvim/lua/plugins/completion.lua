@@ -27,7 +27,20 @@ return {
           ['<C-p>']     = cmp.mapping.select_prev_item(),
           ['<C-b>']     = cmp.mapping.scroll_docs(-4),
           ['<CR>']      = cmp.mapping.confirm { select = true },
-          ['<Tab>']     = cmp.mapping.select_next_item(),
+          -- Copilot-style: Tab accepts the AI ghost text when one is showing
+          -- (minuet, plugins/ai.lua), otherwise it is cmp's next item / a
+          -- plain Tab. package.loaded, not require: requiring would load
+          -- minuet on a machine where LLM features are off.
+          ['<Tab>'] = cmp.mapping(function(fallback)
+            local vt = package.loaded['minuet.virtualtext']
+            if vt and vt.action.is_visible() then
+              vt.action.accept()
+            elseif cmp.visible() then
+              cmp.select_next_item()
+            else
+              fallback()
+            end
+          end, { 'i', 's' }),
           ['<C-Space>'] = cmp.mapping.complete {},
           ['<C-l>'] = cmp.mapping(function()
             if luasnip.expand_or_locally_jumpable() then luasnip.expand_or_jump() end

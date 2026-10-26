@@ -2,10 +2,17 @@ return {
   -- Off when LLM features are enabled: minuet (plugins/ai.lua) owns inline
   -- suggestions then, and two ghost-text engines on the same line fight over
   -- it. `:Copilot enable` turns it back on for the session.
+  --
+  -- copilot.vim also maps insert-mode <Tab> globally even while disabled,
+  -- which shadows cmp's <Tab> (where minuet's accept lives), so it must give
+  -- up the key too.
   {
     'github/copilot.vim',
     init = function()
-      if vim.g.llm_enabled then vim.g.copilot_enabled = false end
+      if vim.g.llm_enabled then
+        vim.g.copilot_enabled = false
+        vim.g.copilot_no_tab_map = true
+      end
     end,
   },
 

@@ -34,15 +34,23 @@ export MINUET_LOCAL_MODEL=qwen3.8-coder:latest
 The backend is picked automatically and re-checked every 30s: cloud when a key
 is set and the API is reachable, the local Ollama model when offline or keyless,
 and paused if neither is available. The statusline shows `AI:claude`,
-`AI:openai`, `AI:local` or `AI:none`. `:MinuetAuto` pins the current choice.
+`AI:openai`, `AI:local`, `AI:none` or `AI:off` (`!` means pinned).
+
+**Settings panel: `:AI` or `<leader>L`.** Set or remove API keys (saved to
+`secrets.zsh`), pin a backend or leave it on auto, pick Claude/OpenAI/Ollama
+models from live lists, change the Ollama host, preload the local model, and
+turn suggestions on and off. Choices persist in `~/.config/dev-setup/llm.json`.
+`:AI on`, `:AI off` and `:AI toggle` work without opening the panel.
 
 | | |
 |---|---|
+| `Tab` | accept suggestion (otherwise next menu item / normal Tab) |
 | `Alt-A` / `Alt-a` | accept suggestion / accept one line |
 | `Alt-z` | accept N lines (type a count, then Enter) |
 | `Alt-]` / `Alt-[` | next / previous suggestion (or request one) |
 | `Alt-e` | dismiss |
 
+Alt is the **left** Option key on a Mac (Ghostty is configured for it).
 Copilot stays installed but is off while LLM features are enabled
 (`:Copilot enable` for a session). `llm-history` views and deletes local
 Qwen Code / Ollama conversation data.
