@@ -1,0 +1,527 @@
+#!/usr/bin/env -S python3 -I
+"""View and permanently delete local Qwen Code + Ollama conversation data.
+
+  llm-history where              show every location that can hold chat data
+  llm-history list               list conversations (Qwen Code + Ollama app chat window)
+  llm-history show <id>          print a conversation (add --thinking for reasoning)
+  llm-history delete <id>...     delete conversations everywhere (-y skips the prompt)
+  llm-history wipe               delete ALL conversation data, logs, memories and backups
+
+<id> may be any unique prefix of an id, as printed by `list`.
+Models, settings and extensions are never touched. Quit every `qwen` window first.
+"""
+import glob
+import json
+import os
+import shutil
+import sqlite3
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timezone
+
+HOME = os.path.expanduser("~")
+QWEN = os.path.join(HOME, ".qwen")
+OLLAMA = os.path.join(HOME, ".ollama")
+OLLAMA_APP_DBS = [os.path.join(HOME, "Library", "Application Support", "Ollama", "db.sqlite"),
+                  os.path.join(OLLAMA, "db.sqlite")]
+
+# Dirs where Qwen Code keeps files/dirs named after a session id.
+QWEN_SESSION_DIRS = ["projects", "tmp", "todos", "file-history", "subagents", "debug", "checkpoints", "sessions", "plans"]
+# Removed wholesale by `wipe` (everything derived from conversations; settings/extensions/skills are kept).
+QWEN_WIPE = ["tmp", "todos", "file-history", "subagents", "debug", "checkpoints", "plans", "sessions",
+             "usage", "usage_record.jsonl", "memories", "tip_history.json"]
+# Ollama app tables holding conversation content (its settings table is kept).
+APP_CHAT_TABLES = ["attachments", "tool_calls", "messages", "chats"]
+
+
+# ---------- helpers ----------
+
+def human(n):
+    for unit in ["B", "K", "M", "G"]:
+        if n < 1024:
+            return f"{n:.0f}{unit}"
+        n /= 1024
+    return f"{n:.1f}T"
+
+
+def size_of(path):
+    if os.path.isfile(path) or os.path.islink(path):
+        return os.path.getsize(path) if os.path.isfile(path) else 0
+    total = 0
+    for root, _, files in os.walk(path):
+        for f in files:
+            try:
+                total += os.path.getsize(os.path.join(root, f))
+            except OSError:
+                pass
+    return total
+
+
+def remove(path):
+    if os.path.isdir(path) and not os.path.islink(path):
+        shutil.rmtree(path, ignore_errors=True)
+    elif os.path.lexists(path):
+        os.remove(path)
+
+
+def atomic_write(path, text):
+    """Replace a file's contents without ever leaving it half-written."""
+    mode = os.stat(path).st_mode & 0o777
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".llm-history-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
+
+
+def read_jsonl(path):
+    out = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                try:
+                    d = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(d, dict):
+                    out.append(d)
+    except OSError:
+        pass
+    return out
+
+
+def text_of(msg, thinking=False):
+    if isinstance(msg, str):
+        return msg
+    if not isinstance(msg, dict):
+        return ""
+    parts = []
+    for p in msg.get("parts") or []:
+        if isinstance(p, str):
+            parts.append(p)
+            continue
+        if not isinstance(p, dict):
+            continue
+        if p.get("thought") and not thinking:
+            continue
+        if isinstance(p.get("text"), str):
+            parts.append(("[thinking] " if p.get("thought") else "") + p["text"])
+        elif isinstance(p.get("functionCall"), dict):
+            parts.append(f"[tool call: {p['functionCall'].get('name')}]")
+        elif isinstance(p.get("functionResponse"), dict):
+            parts.append(f"[tool result: {p['functionResponse'].get('name')}]")
+    return "\n".join(parts)
+
+
+def qwen_running():
+    """PIDs of any running Qwen Code process (interactive, headless or daemon)."""
+    try:
+        out = subprocess.run(["ps", "-axo", "pid=,command="], capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    me = str(os.getpid())
+    return [l.split(None, 1)[0] for l in out.splitlines()
+            if "/qwen-code/" in l and "llm-history" not in l and l.split(None, 1)[0] != me]
+
+
+def require_qwen_closed():
+    pids = qwen_running()
+    if pids:
+        sys.exit(f"Qwen Code is running (pid {', '.join(pids)}). A running session can write deleted "
+                 "history back to disk, so quit every qwen window first, then rerun.")
+
+
+def confirm(prompt, word="y"):
+    try:
+        return input(prompt).strip().lower() == word.lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def fmt_time(ts):
+    if not ts:
+        return ""
+    dt = parse_time(ts)
+    return dt.astimezone().strftime("%Y-%m-%d %H:%M") if dt else str(ts)[:16]
+
+
+def parse_time(ts):
+    """Parse ISO/SQLite timestamps; naive ones (SQLite CURRENT_TIMESTAMP) are UTC."""
+    try:
+        dt = datetime.fromisoformat(str(ts).strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+
+
+def unload_models():
+    """Unload loaded Ollama models, which also drops their in-RAM prompt cache."""
+    try:
+        lines = subprocess.run(["ollama", "ps"], capture_output=True, text=True, timeout=20).stdout.splitlines()[1:]
+    except (OSError, subprocess.SubprocessError):
+        return
+    for line in lines:
+        if line.split():
+            name = line.split()[0]
+            subprocess.run(["ollama", "stop", name], capture_output=True, timeout=60)
+            print(f"Unloaded {name} (clears its in-memory prompt cache).")
+
+
+# ---------- Ollama app chat window (sqlite) ----------
+
+def app_db():
+    return next((p for p in OLLAMA_APP_DBS if os.path.isfile(p)), None)
+
+
+def app_connect(path):
+    con = sqlite3.connect(path, timeout=10)
+    con.execute("PRAGMA foreign_keys = ON")
+    con.execute("PRAGMA secure_delete = ON")   # zero deleted content instead of leaving it in free pages
+    return con
+
+
+def app_tables(con):
+    return {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+
+
+def app_chats():
+    path = app_db()
+    if not path:
+        return {}
+    out = {}
+    try:
+        con = app_connect(path)
+        if not {"chats", "messages"} <= app_tables(con):
+            return {}
+        rows = con.execute("""
+            SELECT c.id, c.title, c.created_at,
+                   (SELECT COUNT(*) FROM messages m WHERE m.chat_id = c.id AND m.role = 'user'),
+                   (SELECT model_name FROM messages m WHERE m.chat_id = c.id AND model_name IS NOT NULL LIMIT 1),
+                   (SELECT content FROM messages m WHERE m.chat_id = c.id AND m.role = 'user' ORDER BY m.id LIMIT 1)
+            FROM chats c""").fetchall()
+        con.close()
+    except sqlite3.Error as e:
+        print(f"warning: could not read Ollama app chats ({e})", file=sys.stderr)
+        return {}
+    for cid, title, created, turns, model, first in rows:
+        out[str(cid)] = {"id": str(cid), "source": "ollama-app", "start": str(created or ""),
+                         "turns": turns, "model": model or "?", "cwd": "Ollama app",
+                         "first": " ".join((first or title or "").split())}
+    return out
+
+
+def app_show(cid, thinking):
+    con = app_connect(app_db())
+    for role, content, think, ts in con.execute(
+            "SELECT role, content, thinking, created_at FROM messages WHERE chat_id = ? ORDER BY id", (cid,)):
+        text = ((f"[thinking] {think}\n" if thinking and think else "") + (content or "")).strip()
+        if text and role in ("user", "assistant"):
+            print(f"--- {'YOU' if role == 'user' else 'MODEL'}  {fmt_time(ts)}\n{text}\n")
+    con.close()
+
+
+def app_delete(cids=None):
+    """Delete the given chats (or all chats if None), then purge freed pages and the WAL."""
+    con = app_connect(app_db())
+    tables = app_tables(con)
+    with con:
+        if cids is None:
+            for t in APP_CHAT_TABLES:
+                if t in tables:
+                    con.execute(f"DELETE FROM {t}")
+        else:
+            for cid in cids:
+                msg_ids = "SELECT id FROM messages WHERE chat_id = ?"
+                for t in ("attachments", "tool_calls"):   # explicit, in case cascades are off
+                    if t in tables:
+                        con.execute(f"DELETE FROM {t} WHERE message_id IN ({msg_ids})", (cid,))
+                con.execute("DELETE FROM messages WHERE chat_id = ?", (cid,))
+                con.execute("DELETE FROM chats WHERE id = ?", (cid,))
+    con.execute("VACUUM")
+    con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    con.close()
+
+
+# ---------- Qwen Code sessions ----------
+
+def qwen_sessions():
+    out = {}
+    for f in glob.glob(os.path.join(QWEN, "projects", "*", "chats", "*.jsonl")):
+        sid = os.path.basename(f)[:-6]
+        recs = read_jsonl(f)
+        users = [r for r in recs if r.get("type") == "user"]
+        first = next((text_of(r.get("message")) for r in users if text_of(r.get("message")).strip()), "")
+        ts = sorted(str(r["timestamp"]) for r in recs if r.get("timestamp"))
+        out[sid] = {
+            "id": sid, "source": "qwen", "file": f,
+            "cwd": next((r["cwd"] for r in recs if isinstance(r.get("cwd"), str)), "?"),
+            "model": next((r["model"] for r in recs if isinstance(r.get("model"), str)), "?"),
+            "turns": len(users), "start": ts[0] if ts else "",
+            "first": " ".join(first.split()),
+        }
+    return out
+
+
+def all_conversations():
+    convs = qwen_sessions()
+    convs.update(app_chats())
+    return convs
+
+
+def resolve(prefixes, convs):
+    ids = []
+    for p in prefixes:
+        hits = [c for c in convs if c.startswith(p)] if p else []
+        if len(hits) != 1:
+            sys.exit(f"'{p}' matches {len(hits)} conversations; use a longer prefix (see `llm-history list`).")
+        ids.append(hits[0])
+    return ids
+
+
+def session_artifacts(sid):
+    """Every file/dir under ~/.qwen whose name contains the session id, plus session pid files that reference it."""
+    paths = set()
+    for d in QWEN_SESSION_DIRS:
+        for root, dirs, files in os.walk(os.path.join(QWEN, d)):
+            for name in dirs + files:
+                if sid in name:
+                    paths.add(os.path.join(root, name))
+    for f in glob.glob(os.path.join(QWEN, "sessions", "*.json")):
+        try:
+            if json.load(open(f)).get("sessionId") == sid:
+                paths.add(f)
+        except (OSError, ValueError, AttributeError):
+            pass
+    return sorted(p for p in paths if not any(p != q and p.startswith(q + os.sep) for q in paths))
+
+
+def scrub_files():
+    """Shared files holding entries from many sessions."""
+    return (glob.glob(os.path.join(QWEN, "tmp", "*", "logs.json"))
+            + glob.glob(os.path.join(QWEN, "usage", "*.jsonl"))
+            + [os.path.join(QWEN, "usage_record.jsonl")])
+
+
+def scrub(path, ids):
+    """Remove entries mentioning any of `ids` from a JSON-list or JSONL file. Returns count removed."""
+    if not os.path.isfile(path):
+        return 0
+    raw = open(path, encoding="utf-8", errors="replace").read()
+    if not any(i in raw for i in ids):
+        return 0
+    if path.endswith(".jsonl"):
+        lines = raw.splitlines(keepends=True)
+        keep = [l for l in lines if not any(i in l for i in ids)]
+        atomic_write(path, "".join(keep))
+        return len(lines) - len(keep)
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        print(f"warning: {path} is not valid JSON; left unchanged", file=sys.stderr)
+        return 0
+    if not isinstance(data, list):
+        return 0
+    keep = [e for e in data if not any(i in json.dumps(e) for i in ids)]
+    atomic_write(path, json.dumps(keep, indent=2, ensure_ascii=False))
+    return len(data) - len(keep)
+
+
+def nonempty_memory_files(cwd=None):
+    """Memory files that may contain facts Qwen Code extracted from conversations."""
+    pats = [os.path.join(QWEN, "memories", "**", "*")]
+    pats.append(os.path.join(QWEN, "projects", "*", "memory", "**", "*"))
+    files = {f for p in pats for f in glob.glob(p, recursive=True) if os.path.isfile(f) and os.path.getsize(f) > 0}
+    return sorted(files)
+
+
+def project_dirs():
+    return sorted({s["cwd"] for s in qwen_sessions().values() if os.path.isdir(s["cwd"])})
+
+
+def openai_log_dirs():
+    """Folders where Qwen Code's optional API logging (full requests + responses) may have written."""
+    dirs = set()
+    settings = [os.path.join(QWEN, "settings.json")] + [os.path.join(p, ".qwen", "settings.json") for p in project_dirs()]
+    custom = []
+    for s in settings:
+        try:
+            m = json.load(open(s)).get("model", {})
+        except (OSError, ValueError, AttributeError):
+            continue
+        if m.get("openAILoggingDir"):
+            custom.append((os.path.dirname(os.path.dirname(s)) if "/.qwen/" in s and not s.startswith(QWEN) else HOME,
+                           m["openAILoggingDir"]))
+    for base, d in custom:
+        d = os.path.expanduser(d)
+        dirs.add(d if os.path.isabs(d) else os.path.join(base, d))
+    for p in project_dirs():
+        dirs.add(os.path.join(p, "logs", "openai"))
+    return sorted(d for d in dirs if os.path.isdir(d) and os.listdir(d))
+
+
+def project_local_qwen_dirs():
+    return [os.path.join(p, ".qwen") for p in project_dirs() if os.path.isdir(os.path.join(p, ".qwen"))]
+
+
+# ---------- commands ----------
+
+def cmd_list(_):
+    epoch = datetime.min.replace(tzinfo=timezone.utc)
+    convs = sorted(all_conversations().values(), key=lambda s: parse_time(s["start"]) or epoch, reverse=True)
+    if not convs:
+        print("No conversations stored.")
+        return
+    # show the shortest prefix (min 8 chars) that is unique across all ids
+    ids = [c["id"] for c in convs]
+    w = next((n for n in range(8, max(map(len, ids)) + 1) if len({i[:n] for i in ids}) == len(ids)), max(map(len, ids)))
+    print(f"{'ID':{w + 2}} {'SOURCE':10} {'STARTED':16} {'TURNS':>5}  {'MODEL':20} {'PROJECT':18} FIRST PROMPT")
+    for s in convs:
+        proj = os.path.basename(s["cwd"].rstrip("/")) or s["cwd"]
+        print(f"{s['id'][:w]:{w + 2}} {s['source']:10} {fmt_time(s['start']):16} {s['turns']:>5}  "
+              f"{s['model'][:20]:20} {proj[:18]:18} {s['first'][:55]}")
+    print(f"\n{len(convs)} conversation(s). `llm-history show <ID>` to read one.")
+
+
+def cmd_show(args):
+    thinking = "--thinking" in args
+    args = [a for a in args if a != "--thinking"]
+    if not args:
+        sys.exit("usage: llm-history show <id> [--thinking]")
+    convs = all_conversations()
+    for cid in resolve(args, convs):
+        s = convs[cid]
+        print(f"=== {cid}  ({s['source']}, {fmt_time(s['start'])}, {s['model']}, {s['cwd']})\n")
+        if s["source"] == "ollama-app":
+            app_show(cid, thinking)
+            continue
+        for r in read_jsonl(s["file"]):
+            if r.get("type") not in ("user", "assistant"):
+                continue
+            t = text_of(r.get("message"), thinking).strip()
+            if t:
+                print(f"--- {'YOU' if r['type'] == 'user' else 'QWEN'}  {fmt_time(r.get('timestamp'))}\n{t}\n")
+
+
+def cmd_delete(args):
+    yes = "-y" in args
+    args = [a for a in args if a != "-y"]
+    if not args:
+        sys.exit("usage: llm-history delete <id>... [-y]")
+    convs = all_conversations()
+    ids = resolve(args, convs)
+    qwen_ids = [i for i in ids if convs[i]["source"] == "qwen"]
+    app_ids = [i for i in ids if convs[i]["source"] == "ollama-app"]
+    if qwen_ids:
+        require_qwen_closed()
+    plan = {sid: session_artifacts(sid) for sid in qwen_ids}
+    for cid in ids:
+        s = convs[cid]
+        print(f"{cid if s['source'] == 'ollama-app' else cid[:8]}  {s['source']}  {fmt_time(s['start'])}  \"{s['first'][:60]}\"")
+        for p in plan.get(cid, []):
+            print("   rm  " + p.replace(HOME, "~"))
+        if cid in app_ids:
+            print(f"   delete chat + messages/attachments from {app_db().replace(HOME, '~')}, then VACUUM")
+    if qwen_ids:
+        print("   + scrub prompt history (tmp/*/logs.json) and usage records")
+    if not yes and not confirm("Permanently delete? [y/N] "):
+        sys.exit("Cancelled.")
+    for paths in plan.values():
+        for p in paths:
+            remove(p)
+    n = sum(scrub(f, qwen_ids) for f in scrub_files()) if qwen_ids else 0
+    if app_ids:
+        app_delete(app_ids)
+    print(f"Deleted {len(ids)} conversation(s); scrubbed {n} history/usage entr{'y' if n == 1 else 'ies'}.")
+    mem = nonempty_memory_files()
+    if mem:
+        print("\nNote: Qwen Code memory may hold facts it saved from conversations. Review/delete by hand:")
+        for f in mem:
+            print("   " + f.replace(HOME, "~"))
+    logs = openai_log_dirs()
+    if logs:
+        print("\nNote: API logs (full prompts) exist here and were not touched; `wipe` removes them:")
+        for d in logs:
+            print("   " + d.replace(HOME, "~"))
+
+
+def cmd_where(_):
+    qs = qwen_sessions()
+    rows = [
+        ("Qwen Code conversations", glob.glob(os.path.join(QWEN, "projects", "*", "chats")), "~/.qwen/projects/*/chats", f"{len(qs)} session(s)"),
+        ("Qwen Code memory", glob.glob(os.path.join(QWEN, "projects", "*", "memory")) + glob.glob(os.path.join(QWEN, "memories")), "~/.qwen/memories, ~/.qwen/projects/*/memory", "facts saved from chats"),
+        ("Qwen Code prompt history", glob.glob(os.path.join(QWEN, "tmp", "*", "logs.json")), "~/.qwen/tmp/*/logs.json", "your typed prompts"),
+        ("Qwen Code debug logs", glob.glob(os.path.join(QWEN, "debug")), "~/.qwen/debug", "may include prompts"),
+        ("Qwen Code usage records", glob.glob(os.path.join(QWEN, "usage*")), "~/.qwen/usage*", "token counts, no text"),
+        ("Qwen Code todos/checkpoints/etc", [p for p in (os.path.join(QWEN, d) for d in ["todos", "file-history", "subagents", "checkpoints", "plans"]) if os.path.exists(p)], "~/.qwen/{todos,file-history,...}", "created on demand"),
+        ("Ollama app chat window", [p for p in [app_db()] if p], "~/Library/Application Support/Ollama/db.sqlite", f"{len(app_chats())} chat(s)"),
+        ("Ollama `ollama run` history", [p for p in [os.path.join(OLLAMA, "history")] if os.path.exists(p)], "~/.ollama/history", "prompts typed into `ollama run`"),
+        ("Ollama logs", glob.glob(os.path.join(OLLAMA, "logs")), "~/.ollama/logs", "metadata only"),
+        ("Ollama launch backups", glob.glob(os.path.join(OLLAMA, "backup")), "~/.ollama/backup", "old config copies"),
+    ]
+    for label, paths, shown, note in rows:
+        size = sum(size_of(p) for p in paths)
+        print(f"{label:32} {human(size) if paths else '-':>6}  {shown}   ({note})")
+    logs = openai_log_dirs()
+    print("\nQwen Code API logging (full prompts):", "found in:" if logs else "none found (logging is off by default)")
+    for d in logs:
+        print("   " + d.replace(HOME, "~"))
+    loc = project_local_qwen_dirs()
+    if loc:
+        print("\nProject-local .qwen folders (settings/plans; not touched by wipe):")
+        for p in loc:
+            print("   " + p.replace(HOME, "~"))
+    print("\nNot on disk: Ollama keeps a prompt cache in RAM only while a model is loaded (wipe unloads models).")
+
+
+def cmd_wipe(args):
+    require_qwen_closed()
+    targets = glob.glob(os.path.join(QWEN, "projects", "*"))
+    targets += [p for p in (os.path.join(QWEN, d) for d in QWEN_WIPE) if os.path.lexists(p)]
+    targets += [p for p in [os.path.join(OLLAMA, "history")] if os.path.lexists(p)]
+    targets += glob.glob(os.path.join(OLLAMA, "backup", "*")) + glob.glob(os.path.join(OLLAMA, "logs", "*"))
+    targets += openai_log_dirs()
+    db = app_db()
+    n_app = len(app_chats())
+    if not targets and not n_app:
+        print("Nothing to delete.")
+    else:
+        print("This permanently deletes:")
+        for p in targets:
+            print(f"   {human(size_of(p)):>6}  {p.replace(HOME, '~')}")
+        if n_app:
+            print(f"   {n_app} Ollama app chat(s) in {db.replace(HOME, '~')} (app settings kept)")
+        print("   Models, settings.json, extensions and skills are kept.")
+        if "-y" not in args and not confirm("Type DELETE to confirm: ", "delete"):
+            sys.exit("Cancelled.")
+        for p in targets:
+            # the running Ollama server holds its current logs open: truncate those instead of unlinking
+            if os.path.dirname(p) == os.path.join(OLLAMA, "logs") and os.path.basename(p) in ("server.log", "app.log"):
+                open(p, "w").close()
+            else:
+                remove(p)
+        if n_app:
+            app_delete(None)
+        print("Deleted.")
+    unload_models()
+
+
+def main():
+    cmds = {"list": cmd_list, "ls": cmd_list, "show": cmd_show, "delete": cmd_delete, "rm": cmd_delete,
+            "wipe": cmd_wipe, "where": cmd_where}
+    if len(sys.argv) < 2 or sys.argv[1] not in cmds:
+        print(__doc__.strip())
+        sys.exit(0 if len(sys.argv) < 2 else 1)
+    try:
+        cmds[sys.argv[1]](sys.argv[2:])
+    except KeyboardInterrupt:
+        sys.exit("\nInterrupted.")
+
+
+if __name__ == "__main__":
+    main()
