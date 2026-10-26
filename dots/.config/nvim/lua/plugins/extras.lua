@@ -1,5 +1,13 @@
 return {
-  { 'github/copilot.vim' },
+  -- Off when LLM features are enabled: minuet (plugins/ai.lua) owns inline
+  -- suggestions then, and two ghost-text engines on the same line fight over
+  -- it. `:Copilot enable` turns it back on for the session.
+  {
+    'github/copilot.vim',
+    init = function()
+      if vim.g.llm_enabled then vim.g.copilot_enabled = false end
+    end,
+  },
 
   -- Writes Session.vim in the cwd and keeps it updated, so a restored pane can
   -- reopen with `nvim -S` instead of an empty editor. Both tmux-resurrect's

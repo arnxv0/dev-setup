@@ -10,6 +10,43 @@ The neovim config isn't the best looking, I will refactor it later. (Also, thank
 
 Inspired from [here](https://frontendmasters.github.io/dev-prod-2) and [here](https://github.com/theprimeagen/dev)
 
+## Optional: LLM features
+
+Off unless you ask for them:
+
+```bash
+./run.sh --llm      # enable on this machine (remembered; plain ./run.sh keeps it)
+./run.sh --no-llm   # disable again (API key file is kept, Ollama not uninstalled)
+```
+
+`--llm` installs Ollama, creates `~/.config/dev-setup/secrets.zsh` (mode 600,
+never overwritten, never in the repo) and turns on
+[minuet-ai.nvim](https://github.com/milanglacier/minuet-ai.nvim) inline
+completion in nvim. Put your keys in that file:
+
+```zsh
+export ANTHROPIC_API_KEY='...'   # preferred when set
+export OPENAI_API_KEY='...'
+export MINUET_CLOUD=openai       # prefer OpenAI when both are set
+export MINUET_LOCAL_MODEL=qwen3.8-coder:latest
+```
+
+The backend is picked automatically and re-checked every 30s: cloud when a key
+is set and the API is reachable, the local Ollama model when offline or keyless,
+and paused if neither is available. The statusline shows `AI:claude`,
+`AI:openai`, `AI:local` or `AI:none`. `:MinuetAuto` pins the current choice.
+
+| | |
+|---|---|
+| `Alt-A` / `Alt-a` | accept suggestion / accept one line |
+| `Alt-z` | accept N lines (type a count, then Enter) |
+| `Alt-]` / `Alt-[` | next / previous suggestion (or request one) |
+| `Alt-e` | dismiss |
+
+Copilot stays installed but is off while LLM features are enabled
+(`:Copilot enable` for a session). `llm-history` views and deletes local
+Qwen Code / Ollama conversation data.
+
 ## tmux session persistence
 
 Sessions, window layouts, working directories and — critically — which Claude

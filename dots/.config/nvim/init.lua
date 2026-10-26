@@ -44,6 +44,10 @@ vim.api.nvim_create_autocmd('TextYankPost', {
   callback = function() vim.highlight.on_yank() end,
 })
 
+-- LLM features are opt-in per machine: `./run.sh --llm` creates this marker,
+-- `./run.sh --no-llm` removes it. Read by plugins/ai.lua and plugins/extras.lua.
+vim.g.llm_enabled = vim.uv.fs_stat(vim.fn.expand '~/.config/dev-setup/llm') ~= nil
+
 local lazypath = vim.fn.stdpath 'data' .. '/lazy/lazy.nvim'
 if not vim.uv.fs_stat(lazypath) then
   local out = vim.fn.system {
@@ -64,6 +68,7 @@ require('lazy').setup({
   { import = 'plugins.treesitter' },
   { import = 'plugins.lsp' },
   { import = 'plugins.completion' },
+  { import = 'plugins.ai' },
   { import = 'plugins.telescope' },
   { import = 'plugins.flutter' },
   { import = 'plugins.extras' },

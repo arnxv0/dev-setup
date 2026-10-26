@@ -2,6 +2,17 @@
 
 set -uo pipefail
 
+# --llm / --no-llm as passed to run.sh; otherwise follow this machine's
+# remembered choice (the marker setup-dots.sh writes).
+LLM=0
+[ -e "$HOME/.config/dev-setup/llm" ] && LLM=1
+for a in "$@"; do
+    case "$a" in
+        --llm) LLM=1 ;;
+        --no-llm) LLM=0 ;;
+    esac
+done
+
 # Homebrew is a hard prerequisite: every tool below comes from it. Exiting 0
 # here used to report success while installing nothing, after which run.sh
 # cheerfully deployed configs referencing nvim/tmux/fzf that did not exist.
@@ -105,6 +116,21 @@ if ! brew list --cask ghostty &> /dev/null; then
     echo "Ghostty installed."
 else
     echo "Ghostty already installed."
+fi
+
+# ── Ollama (opt-in: local LLM for nvim AI completion when offline) ──────────
+# Only with --llm. Models are NOT pulled here -- they are tens of GB. nvim
+# uses whatever MINUET_LOCAL_MODEL names (default qwen3.8-coder:latest); pull
+# it with `ollama pull <model>` if it is missing. --no-llm never uninstalls.
+if [ "$LLM" -eq 1 ]; then
+    if ! command -v ollama &> /dev/null; then
+        brew install ollama
+        echo "Ollama installed. Start it with: brew services start ollama"
+    else
+        echo "Ollama already installed."
+    fi
+else
+    echo "Ollama skipped (LLM features off; enable with ./run.sh --llm)."
 fi
 
 # ── TPM (tmux plugin manager) ─────────────────────────────────────────────────

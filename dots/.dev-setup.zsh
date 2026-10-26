@@ -170,3 +170,9 @@ bindkey '^r' _fzf_history_widget
 bindkey '^[r' _fzf_history_all_widget
 bindkey '^x^r' _fzf_history_all_widget
 bindkey -s '^f' "tmux-sessionizer\n"
+
+# ── API keys ─────────────────────────────────────────────────────────────────
+# OPENAI_API_KEY / ANTHROPIC_API_KEY for nvim's AI completion (minuet) and
+# anything else that wants them. They live outside the repo in a 600 file that
+# setup-dots.sh creates once as a template and never touches again.
+[[ -r "$HOME/.config/dev-setup/secrets.zsh" ]] && source "$HOME/.config/dev-setup/secrets.zsh"

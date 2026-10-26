@@ -34,18 +34,22 @@ MANIFEST="$STATE_DIR/manifest"
 FORCE=0
 CHECK=0
 ONLY=""
+LLM=""   # "" = keep this machine's current choice, 1 = enable, 0 = disable
+LLM_MARKER="$HOME/.config/dev-setup/llm"
 
 # generated/runtime files that live alongside config but are not config
 EXCLUDES=( '.DS_Store' 'lazy-lock.json' 'tags' '.luarc.json' 'test.sh' )
 
 usage() {
     cat <<USAGE
-usage: setup-dots.sh [--check] [--force]
+usage: setup-dots.sh [--check] [--force] [--only P] [--llm | --no-llm]
 
   (no flags)  install anything missing; report anything that differs
   --check     report only; change nothing
   --force     also overwrite items that differ (one timestamped backup is kept)
   --only P    restrict to items whose name contains P (repeatable-safe substring)
+  --llm       enable LLM features on this machine (remembered for later runs)
+  --no-llm    disable them again (your API key file is kept)
 
 Items that differ are never overwritten without --force. Combine --force with
 --only to apply one item at a time, e.g.
@@ -58,6 +62,8 @@ while [ $# -gt 0 ]; do
         --force) FORCE=1 ;;
         --check|--dry-run) CHECK=1 ;;
         --only) shift; ONLY="${1:-}" ;;
+        --llm) LLM=1 ;;
+        --no-llm) LLM=0 ;;
         -h|--help) usage; exit 0 ;;
         *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
     esac
@@ -275,6 +281,82 @@ ensure_zshrc_hook() {
 if [ -z "$ONLY" ] || case "~/.zshrc hook" in *"$ONLY"*) true ;; *) false ;; esac; then
     echo "dev-setup: shell hook"
     ensure_zshrc_hook
+fi
+
+# ── LLM features (opt-in) ───────────────────────────────────────────────────
+# A marker file records the choice so a plain re-run keeps it. nvim reads the
+# same marker (vim.g.llm_enabled) to decide whether to load minuet.
+ensure_llm_marker() {
+    local label='LLM features'
+    if [ "$LLM" = 0 ]; then
+        if [ ! -e "$LLM_MARKER" ]; then
+            printf '  %-10s %s\n' 'OK' "$label (disabled)"
+            n_ok=$((n_ok+1))
+        elif [ "$CHECK" -eq 1 ]; then
+            printf '  %-10s %s\n' 'DISABLE' "$label"
+        else
+            rm -f "$LLM_MARKER"
+            printf '  %-10s %s  (API key file kept)\n' 'DISABLED' "$label"
+        fi
+        return
+    fi
+    if [ -e "$LLM_MARKER" ]; then
+        printf '  %-10s %s\n' 'OK' "$label (enabled)"
+        n_ok=$((n_ok+1)); return
+    fi
+    if [ "$LLM" != 1 ]; then
+        printf '  %-10s %s  -- off; enable with --llm\n' 'SKIPPED' "$label"
+        return
+    fi
+    if [ "$CHECK" -eq 1 ]; then
+        printf '  %-10s %s\n' 'NEW' "$label"
+        n_new=$((n_new+1)); return
+    fi
+    mkdir -p "$(dirname "$LLM_MARKER")"
+    printf 'enabled by dev-setup on %s\n' "$(date +%Y-%m-%d)" > "$LLM_MARKER"
+    printf '  %-10s %s\n' 'ENABLED' "$label"
+    n_new=$((n_new+1))
+}
+
+# Sourced by ~/.dev-setup.zsh. Created once, empty, mode 600, and never
+# rewritten after that: it holds real keys, so it is not tracked or compared.
+ensure_secrets() {
+    local label='secrets file (API keys)'
+    local f="$HOME/.config/dev-setup/secrets.zsh"
+    if [ -n "$ONLY" ]; then
+        case "$label" in *"$ONLY"*) ;; *) return ;; esac
+    fi
+    if [ -e "$f" ]; then
+        printf '  %-10s %s\n' 'OK' "$label"
+        n_ok=$((n_ok+1)); return
+    fi
+    if [ "$CHECK" -eq 1 ]; then
+        printf '  %-10s %s -> %s\n' 'NEW' "$label" "${f/#$HOME/~}"
+        n_new=$((n_new+1)); return
+    fi
+    mkdir -p "$(dirname "$f")"
+    ( umask 077; cat > "$f" <<'SECRETS'
+# API keys -- sourced by ~/.dev-setup.zsh. Not in any repo; keep it mode 600.
+# Uncomment what you have. nvim's AI completion uses Claude when
+# ANTHROPIC_API_KEY is set (OpenAI otherwise), and falls back to local Ollama
+# when offline or when neither is set.
+# export ANTHROPIC_API_KEY=''
+# export OPENAI_API_KEY=''
+# export MINUET_CLOUD=openai                   # prefer OpenAI when both are set
+# export MINUET_LOCAL_MODEL=qwen3.8-coder:latest
+SECRETS
+    )
+    printf '  %-10s %s -> %s\n' 'INSTALLED' "$label" "${f/#$HOME/~}"
+    n_new=$((n_new+1))
+}
+
+if [ -z "$ONLY" ] || case "LLM features" in *"$ONLY"*) true ;; *) false ;; esac; then
+    echo "dev-setup: llm"
+    ensure_llm_marker
+    # in --check mode with --llm the marker is not written yet; ask what WOULD be
+    if [ -e "$LLM_MARKER" ] || { [ "$LLM" = 1 ] && [ "$CHECK" -eq 1 ]; }; then
+        ensure_secrets
+    fi
 fi
 
 # ── global gitignore for Session.vim ────────────────────────────────────────
