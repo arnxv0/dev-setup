@@ -134,7 +134,7 @@ local function apply(new)
     cfg.provider = new
     cfg.context_window = 16000
     cfg.n_completions = 2
-    cfg.request_timeout = 3
+    cfg.request_timeout = 4
     cfg.throttle, cfg.debounce = 1000, 400
   end
   if announced then
